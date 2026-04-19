@@ -126,6 +126,7 @@ class Sofa {
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
         let newCount = 0;
+        let anyInTopLane = false; // 上の横通路にドットが残っているかチェック
 
         for (let i = 0; i < this.activeCount; i++) {
             const idx = this.activeIndices[i];
@@ -142,6 +143,10 @@ class Sofa {
 
             if (inA || inB) {
                 this.activeIndices[newCount++] = idx;
+                // ドットが横通路（一番上の段）の範囲に一つでもあればフラグを立てる
+                if (cy <= UNIT && cx < UNIT * 5) {
+                    anyInTopLane = true;
+                }
             }
         }
         this.activeCount = newCount;
@@ -149,9 +154,11 @@ class Sofa {
 
         if (this.area <= 0) this.alive = false;
 
-        // 【修正】成功判定を「中心が縦通路の入り口を越えたら」に変更
-        // x座標が 5*UNIT (縦通路の左端) を超えて、少し下に下がれば成功！
-        if (this.area > 0 && this.x > UNIT * 5.2 && this.y > UNIT * 1.1) {
+        // 【厳格判定】
+        // 1. 生き残りセルがある
+        // 2. 一番上の横通路にセルが一つも残っていない
+        // 3. ソファの中心が縦通路のエリアにある
+        if (this.area > 0 && !anyInTopLane && this.x > UNIT * 5) {
             this.finished = true;
         }
     }
