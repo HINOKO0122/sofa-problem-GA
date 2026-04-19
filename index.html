@@ -2,32 +2,33 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa GA: Physics-Based Smooth Motion</title>
+    <title>Sofa GA: Physics & Save Fixed</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
-        .header { background: #222; padding: 15px; width: 100%; text-align: center; border-bottom: 3px solid #00d4ff; }
+        .header { background: #222; padding: 15px; width: 100%; text-align: center; border-bottom: 3px solid #00ff88; }
         .main-layout { display: flex; flex-direction: row; width: 98%; gap: 15px; padding: 15px; }
         .side-panel { background: #1a1a1a; padding: 20px; border-radius: 10px; min-width: 260px; display: flex; flex-direction: column; gap: 15px; border: 1px solid #333; }
-        .stats { background: #000; padding: 10px; border-radius: 5px; border-left: 4px solid #00d4ff; }
-        .stat-val { color: #00d4ff; font-weight: bold; font-family: monospace; }
+        .stats { background: #000; padding: 10px; border-radius: 5px; border-left: 4px solid #00ff88; }
+        .stat-val { color: #00ff88; font-weight: bold; font-family: monospace; font-size: 1.2rem; }
         .slider-group { display: flex; flex-direction: column; gap: 5px; }
-        .slider-group label { font-size: 0.85rem; color: #00d4ff; }
-        input[type=range] { cursor: pointer; accent-color: #00d4ff; }
+        .slider-group label { font-size: 0.85rem; color: #00ff88; }
+        input[type=range] { cursor: pointer; accent-color: #00ff88; }
         #canvas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex-grow: 1; }
         canvas { background: #000; border: 1px solid #444; width: 100%; height: auto; aspect-ratio: 1/1; }
-        button { padding: 8px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-size: 0.8rem; }
+        button { padding: 8px; cursor: pointer; background: #333; color: #00ff88; border: 1px solid #00ff88; border-radius: 5px; font-size: 0.8rem; margin-top: 5px; }
+        button:hover { background: #00ff88; color: #000; }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>📐 物理ベース・滑らか進化型：1:4 ソファGA</h1>
+        <h1>📐 物理ベース：1:4 ソファGA（保存機能修正版）</h1>
     </div>
 
     <div class="main-layout">
         <div class="side-panel">
             <div class="stats">
                 <div>世代: <span id="gen-label" class="stat-val">1</span></div>
-                <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
+                <div>最高体積: <span id="area-label" class="stat-val">4.0000</span></div>
                 <div>成功個体: <span id="finish-label" class="stat-val">0</span></div>
             </div>
 
@@ -36,15 +37,17 @@
                 <input type="range" id="mut-v" min="0.1" max="3.0" step="0.1" value="0.80" oninput="updateParams()">
             </div>
             <div class="slider-group">
-                <label>回転変異 (VR): <span id="val-r-mut">0.0020</span></label>
+                <label>回転加速度変異 (VR): <span id="val-r-mut">0.0020</span></label>
                 <input type="range" id="mut-r" min="0.0001" max="0.01" step="0.0001" value="0.0020" oninput="updateParams()">
             </div>
 
-            <p style="font-size: 0.75rem; color: #777;">慣性と摩擦を導入しました。急に止まったり曲がったりできないため、プルプルしません。</p>
+            <div style="font-size: 0.75rem; color: #888; border-top: 1px solid #333; padding-top: 10px;">
+                <strong>体積定義:</strong> 生存セル数 / 10,000
+            </div>
 
             <button onclick="exportJSON()">JSON保存</button>
-            <input type="file" id="fileInput" style="display:none" onchange="importJSON(event)">
             <button onclick="document.getElementById('fileInput').click()">JSON読込</button>
+            <input type="file" id="fileInput" style="display:none" onchange="importJSON(event)">
         </div>
 
         <div id="canvas-grid"></div>
@@ -81,7 +84,7 @@ class Sofa {
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
                 mode: Math.random() < 0.1 ? 0 : (Math.random() < 0.6 ? 1 : (Math.random() < 0.8 ? 2 : 3)),
-                ax: (Math.random() - 0.1) * 2.0, // 加速度として扱う
+                ax: (Math.random() - 0.1) * 2.0,
                 ay: (Math.random() - 0.4) * 2.0,
                 ar: (Math.random() * 0.002) 
             });
@@ -93,7 +96,7 @@ class Sofa {
         this.x = UNIT * 2;
         this.y = UNIT * 0.5;
         this.rotation = 0;
-        this.vx = 0; // 現在の速度
+        this.vx = 0;
         this.vy = 0;
         this.vr = 0;
         this.step = 0;
@@ -102,40 +105,21 @@ class Sofa {
         this.activeIndices = new Int32Array(INITIAL_AREA);
         for(let i=0; i < INITIAL_AREA; i++) this.activeIndices[i] = i;
         this.activeCount = INITIAL_AREA;
-        this.area = this.activeCount;
     }
 
     update() {
         if (!this.alive || this.finished || this.step >= STEP_LIMIT) return;
         const g = this.gene[this.step];
-        const friction = 0.95; // 摩擦
+        const friction = 0.95;
 
-        // モードに応じた「力（加速度）」の付与
         switch(g.mode) {
-            case 1: // 移動のみ
-                this.vx += g.ax * 0.5;
-                this.vy += g.ay * 0.5;
-                break;
-            case 2: // 回転のみ
-                this.vr += g.ar * 0.5;
-                break;
-            case 3: // 両方
-                this.vx += g.ax * 0.5;
-                this.vy += g.ay * 0.5;
-                this.vr += g.ar * 0.5;
-                break;
+            case 1: this.vx += g.ax * 0.5; this.vy += g.ay * 0.5; break;
+            case 2: this.vr += g.ar * 0.5; break;
+            case 3: this.vx += g.ax * 0.5; this.vy += g.ay * 0.5; this.vr += g.ar * 0.5; break;
         }
 
-        // 摩擦で速度を減衰（これがプルプルを消す）
-        this.vx *= friction;
-        this.vy *= friction;
-        this.vr *= friction;
-
-        // 座標更新
-        this.x += this.vx;
-        this.y += this.vy;
-        this.rotation += this.vr;
-
+        this.vx *= friction; this.vy *= friction; this.vr *= friction;
+        this.x += this.vx; this.y += this.vy; this.rotation += this.vr;
         this.checkCollision();
         this.step++;
     }
@@ -148,12 +132,9 @@ class Sofa {
 
         for (let i = 0; i < this.activeCount; i++) {
             const idx = this.activeIndices[i];
-            const r = (idx / COLS) | 0;
-            const c = idx % COLS;
-            const ox = (c - COLS / 2) * CELL_SIZE;
-            const oy = (r - ROWS / 2) * CELL_SIZE;
-            const cx = this.x + ox * cos - oy * sin;
-            const cy = this.y + ox * sin + oy * cos;
+            const r = (idx / COLS) | 0; const c = idx % COLS;
+            const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
+            const cx = this.x + ox * cos - oy * sin; const cy = this.y + ox * sin + oy * cos;
 
             const inA = (cx >= 0 && cx <= UNIT * 6 && cy >= 0 && cy <= UNIT);
             const inB = (cx >= UNIT * 5 && cx <= UNIT * 6 && cy >= 0 && cy <= UNIT * 8);
@@ -164,9 +145,8 @@ class Sofa {
             }
         }
         this.activeCount = newCount;
-        this.area = newCount;
-        if (this.area <= 0) this.alive = false;
-        if (this.area > 0 && !anyInUpperArea) this.finished = true;
+        if (this.activeCount <= 0) this.alive = false;
+        if (this.activeCount > 0 && !anyInUpperArea) this.finished = true;
     }
 
     removeIslands() {
@@ -194,35 +174,20 @@ class Sofa {
         }
         this.activeCount = maxGroup.length;
         for (let i = 0; i < maxGroup.length; i++) this.activeIndices[i] = maxGroup[i];
-        this.area = this.activeCount;
     }
 
     draw(ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-        
-        // 背景通路の描画
         ctx.fillStyle = "#1a1a1a";
-        ctx.fillRect(0, 0, UNIT * 6, UNIT); // 横通路
-        ctx.fillRect(UNIT * 5, 0, UNIT, UNIT * 8); // 縦通路
+        ctx.fillRect(0, 0, UNIT * 6, UNIT); 
+        ctx.fillRect(UNIT * 5, 0, UNIT, UNIT * 8); 
 
-        // ガイドライン（グリッド）の描画
         ctx.strokeStyle = "#333";
         ctx.lineWidth = 1;
-        for(let i=0; i<=6; i++) { // 縦線
-            ctx.beginPath(); ctx.moveTo(i * UNIT, 0); ctx.lineTo(i * UNIT, UNIT); ctx.stroke();
-        }
-        for(let i=0; i<=8; i++) { // 横線
-            ctx.beginPath(); ctx.moveTo(UNIT * 5, i * UNIT); ctx.lineTo(UNIT * 6, i * UNIT); ctx.stroke();
-        }
+        for(let i=0; i<=6; i++){ctx.beginPath();ctx.moveTo(i*UNIT,0);ctx.lineTo(i*UNIT,UNIT);ctx.stroke();}
+        for(let i=0; i<=8; i++){ctx.beginPath();ctx.moveTo(UNIT*5,i*UNIT);ctx.lineTo(UNIT*6,i*UNIT);ctx.stroke();}
 
-        // 成功ライン（角の出口）の強調
-        ctx.strokeStyle = "rgba(255, 0, 255, 0.5)";
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath(); ctx.moveTo(UNIT * 5, UNIT); ctx.lineTo(UNIT * 6, UNIT); ctx.stroke();
-        ctx.setLineDash([]);
-
-        // ソファ本体の描画
-        ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#555");
+        ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00ff88" : "#555");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
         for (let i = 0; i < this.activeCount; i += 2) {
@@ -230,7 +195,7 @@ class Sofa {
             const r = (idx / COLS) | 0; const c = idx % COLS;
             const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
             const cx = this.x + ox * cos - oy * sin; const cy = this.y + ox * sin + oy * cos;
-            ctx.fillRect(cx, cy, 1.5, 1.5);
+            ctx.fillRect(cx, cy, 1.2, 1.2);
         }
     }
 }
@@ -269,14 +234,14 @@ function loop() {
 
 function evolve() {
     sofas.sort((a, b) => {
-        const scoreA = (a.finished ? 1e12 : 0) + a.area;
-        const scoreB = (b.finished ? 1e12 : 0) + b.area;
+        const scoreA = (a.finished ? 1e12 : 0) + a.activeCount;
+        const scoreB = (b.finished ? 1e12 : 0) + b.activeCount;
         return scoreB - scoreA;
     });
 
     const best = sofas[0];
     document.getElementById('gen-label').innerText = generation++;
-    document.getElementById('area-label').innerText = (best.area / 10000).toFixed(4);
+    document.getElementById('area-label').innerText = (best.activeCount / 10000).toFixed(4);
     document.getElementById('finish-label').innerText = sofas.filter(s => s.finished).length;
 
     const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
@@ -297,6 +262,31 @@ function evolve() {
     sofas = nextGen;
     sofas.forEach(s => s.reset());
     requestAnimationFrame(loop);
+}
+
+// --- 保存・読込関数 ---
+function exportJSON() {
+    const data = JSON.stringify({ gen: generation, gene: sofas[0].gene });
+    const blob = new Blob([data], {type: 'application/json'});
+    const a = document.createElement('a'); 
+    a.href = URL.createObjectURL(blob); 
+    a.download = `sofa_gen${generation}.json`; 
+    a.click();
+}
+
+function importJSON(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const imported = JSON.parse(e.target.result);
+        sofas.forEach(s => { 
+            s.gene = JSON.parse(JSON.stringify(imported.gene)); 
+            s.reset(); 
+        });
+        generation = imported.gen || 1;
+    };
+    reader.readAsText(file);
 }
 
 init();
