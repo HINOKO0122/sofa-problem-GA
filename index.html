@@ -2,48 +2,46 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: Exact 1:4 Ratio Edition</title>
+    <title>Sofa Problem: Visual 1:4 Calibration</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
         .controls { background: #222; padding: 15px; border-radius: 10px; width: 95%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; margin-top: 10px; }
         .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 20px; }
-        canvas { background: #000; border: 1px solid #333; width: 300px; height: 200px; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 20px; }
+        canvas { background: #000; border: 1px solid #444; width: 500px; height: 350px; }
         .io-panel { margin: 15px; display: flex; gap: 10px; }
-        button, label { padding: 10px 20px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-weight: bold; }
-        button:hover, label:hover { background: #00d4ff; color: #000; }
-        .desc { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+        button { padding: 10px 20px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-weight: bold; }
+        .desc { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; }
     </style>
 </head>
 <body>
-    <h1>📏 正確な 1:4 比率ソファGA</h1>
+    <h1>📏 視覚補正版：正確な 1:4 ソファGA</h1>
     
     <div class="controls">
         <div>世代: <span id="gen-label" class="stat-val">1</span></div>
         <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
-        <div>完走成功: <span id="finish-label" class="stat-val">0</span></div>
+        <div>成功数: <span id="finish-label" class="stat-val">0</span></div>
     </div>
 
     <div class="io-panel">
         <button onclick="exportJSON()">JSON保存</button>
-        <label for="fileInput">JSON読込</label>
+        <button onclick="document.getElementById('fileInput').click()">JSON読込</button>
         <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
     </div>
-    <div class="desc">※正確に100×400セル (1:4) | キャンバス領域を拡大して通路を再設計</div>
+    <p class="desc">※背景の薄い枠がUNIT（通路幅）単位のグリッドです。ソファが4マス分あることを確認できます。</p>
 
     <div id="canvas-grid"></div>
 
 <script>
-const TOTAL_POP = 100;
-const DISPLAY_COUNT = 10; 
-const UNIT = 50;  // 通路幅を50に固定
-const STEP_LIMIT = 1200; // 長い身体が回り込むために時間を延長
+const TOTAL_POP = 40; // 描画負荷のため個体数を調整
+const DISPLAY_COUNT = 4; 
+const UNIT = 60;  // 通路幅を大きく
+const STEP_LIMIT = 1500; // さらに時間を延長
 
-// 体の解像度 (100x400 = 正確に1:4)
+// 1:4比率 (100x400)
 const COLS = 400; 
 const ROWS = 100;
-// 1UNIT(通路幅)の中にROWS(100セル)が収まるようにサイズを決定
-const CELL_SIZE = UNIT / ROWS; 
+const CELL_SIZE = UNIT / ROWS; // これで横幅(ROWS)が正確に1 UNITになる
 
 class Sofa {
     constructor(gene = null) {
@@ -55,23 +53,21 @@ class Sofa {
         let commands = [];
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
-                vx: (Math.random() - 0.2) * 5, 
-                vy: (Math.random() - 0.5) * 5,
-                vr: (Math.random() - 0.5) * 0.18,
+                vx: (Math.random() - 0.15) * 5.5, 
+                vy: (Math.random() - 0.5) * 5.5,
+                vr: (Math.random() - 0.5) * 0.2,
             });
         }
         return commands;
     }
 
     reset() {
-        // 全体のスケールが大きくなったため、初期位置を調整
-        this.x = 20;
-        this.y = 150;
+        this.x = 30;
+        this.y = 180;
         this.rotation = 0;
         this.step = 0;
         this.alive = true;
         this.finished = false;
-        
         this.activeIndices = new Int32Array(COLS * ROWS);
         for(let i=0; i < COLS * ROWS; i++) this.activeIndices[i] = i;
         this.activeCount = COLS * ROWS;
@@ -93,35 +89,29 @@ class Sofa {
         const sin = Math.sin(this.rotation);
         let newCount = 0;
         let allInGoal = true;
+        const wallY = 150; 
 
         for (let i = 0; i < this.activeCount; i++) {
             const idx = this.activeIndices[i];
             const r = (idx / COLS) | 0;
             const c = idx % COLS;
-            
-            // 正確に中心を(0,0)とした座標
             const ox = (c - COLS / 2) * CELL_SIZE;
             const oy = (r - ROWS / 2) * CELL_SIZE;
-
             const cx = this.x + ox * cos - oy * sin;
             const cy = this.y + ox * sin + oy * cos;
 
-            // 拡大した通路の判定 (角は UNIT*5, UNIT*5 付近)
-            // 横通路: yが 120〜120+UNIT
-            const inA = (cx >= 0 && cx <= UNIT * 6 && cy >= 120 && cy <= 120 + UNIT);
-            // 縦通路: xが UNIT*5〜UNIT*6
-            const inB = (cx >= UNIT * 5 && cx <= UNIT * 6 && cy >= 0 && cy <= 120 + UNIT);
+            const inA = (cx >= 0 && cx <= UNIT * 7 && cy >= wallY && cy <= wallY + UNIT);
+            const inB = (cx >= UNIT * 6 && cx <= UNIT * 7 && cy >= 0 && cy <= wallY + UNIT);
 
             if (inA || inB) {
                 this.activeIndices[newCount++] = idx;
-                if (cy > 120) allInGoal = false;
+                if (cy > wallY) allInGoal = false;
             }
         }
-
         this.activeCount = newCount;
         this.area = newCount;
         if (this.area <= 0) this.alive = false;
-        if (this.area > 0 && allInGoal && this.x > UNIT * 5) this.finished = true;
+        if (this.area > 0 && allInGoal && this.x > UNIT * 6) this.finished = true;
     }
 
     removeIslands() {
@@ -154,16 +144,24 @@ class Sofa {
 
     draw(ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-        ctx.fillStyle = "#2a2a2a";
-        // 通路の描画を判定に合わせる
-        ctx.fillRect(0, 120, UNIT * 5, UNIT); 
-        ctx.fillRect(UNIT * 5, 0, UNIT, 120 + UNIT);
+        
+        // グリッドガイド（視覚確認用）
+        ctx.strokeStyle = "#222";
+        for(let i=0; i<10; i++) {
+            ctx.strokeRect(i * UNIT, 150, UNIT, UNIT);
+            ctx.strokeRect(UNIT * 6, 150 - (i*UNIT), UNIT, UNIT);
+        }
+
+        // 通路
+        ctx.fillStyle = "#1a1a1a";
+        ctx.fillRect(0, 150, UNIT * 6, UNIT); 
+        ctx.fillRect(UNIT * 6, 0, UNIT, 150 + UNIT);
         
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
 
-        for (let i = 0; i < this.activeCount; i += 6) { // 高解像度なので間引きを増やして高速化
+        for (let i = 0; i < this.activeCount; i += 4) {
             const idx = this.activeIndices[i];
             const r = (idx / COLS) | 0; const c = idx % COLS;
             const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
@@ -182,7 +180,7 @@ function init() {
     grid.innerHTML = ""; 
     for (let i = 0; i < DISPLAY_COUNT; i++) {
         const cvs = document.createElement('canvas');
-        cvs.width = 400; cvs.height = 300; // キャンバス自体を大きく
+        cvs.width = 500; cvs.height = 350;
         grid.appendChild(cvs);
         ctxs.push(cvs.getContext('2d'));
     }
@@ -206,20 +204,19 @@ function loop() {
 }
 
 function evolve() {
-    sofas.sort((a, b) => ((b.finished?1e10:0) + b.area) - ((a.finished?1e10:0) + a.area));
+    sofas.sort((a, b) => ((b.finished?1e11:0) + b.area) - ((a.finished?1e11:0) + a.area));
     const best = sofas[0];
     document.getElementById('gen-label').innerText = generation++;
-    // 体積 = 面積 / 10000 (初期状態が 4.0000 になるように)
     document.getElementById('area-label').innerText = (best.area / 10000).toFixed(4);
     document.getElementById('finish-label').innerText = sofas.filter(s => s.finished).length;
 
     const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
     while(nextGen.length < TOTAL_POP) {
-        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 15)].gene;
+        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 12)].gene;
         const child = p.map(cmd => ({
-            vx: cmd.vx + (Math.random()-0.5)*0.6,
-            vy: cmd.vy + (Math.random()-0.5)*0.6,
-            vr: cmd.vr + (Math.random()-0.5)*0.03
+            vx: cmd.vx + (Math.random()-0.5)*0.5,
+            vy: cmd.vy + (Math.random()-0.5)*0.5,
+            vr: cmd.vr + (Math.random()-0.5)*0.02
         }));
         nextGen.push(new Sofa(child));
     }
@@ -233,7 +230,7 @@ function exportJSON() {
     const blob = new Blob([data], {type: 'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `sofa_1x4_exact_gen${generation}.json`;
+    a.download = `sofa_calibrated_1x4.json`;
     a.click();
 }
 
