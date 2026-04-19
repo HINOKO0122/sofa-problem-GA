@@ -199,10 +199,29 @@ class Sofa {
 
     draw(ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        
+        // 背景通路の描画
         ctx.fillStyle = "#1a1a1a";
-        ctx.fillRect(0, 0, UNIT * 6, UNIT); 
-        ctx.fillRect(UNIT * 5, 0, UNIT, UNIT * 8); 
+        ctx.fillRect(0, 0, UNIT * 6, UNIT); // 横通路
+        ctx.fillRect(UNIT * 5, 0, UNIT, UNIT * 8); // 縦通路
 
+        // ガイドライン（グリッド）の描画
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 1;
+        for(let i=0; i<=6; i++) { // 縦線
+            ctx.beginPath(); ctx.moveTo(i * UNIT, 0); ctx.lineTo(i * UNIT, UNIT); ctx.stroke();
+        }
+        for(let i=0; i<=8; i++) { // 横線
+            ctx.beginPath(); ctx.moveTo(UNIT * 5, i * UNIT); ctx.lineTo(UNIT * 6, i * UNIT); ctx.stroke();
+        }
+
+        // 成功ライン（角の出口）の強調
+        ctx.strokeStyle = "rgba(255, 0, 255, 0.5)";
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath(); ctx.moveTo(UNIT * 5, UNIT); ctx.lineTo(UNIT * 6, UNIT); ctx.stroke();
+        ctx.setLineDash([]);
+
+        // ソファ本体の描画
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#555");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
@@ -211,7 +230,7 @@ class Sofa {
             const r = (idx / COLS) | 0; const c = idx % COLS;
             const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
             const cx = this.x + ox * cos - oy * sin; const cy = this.y + ox * sin + oy * cos;
-            ctx.fillRect(cx, cy, 1, 1);
+            ctx.fillRect(cx, cy, 1.5, 1.5);
         }
     }
 }
