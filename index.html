@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Moving Sofa GA Solver</title>
+    <style>
+        body { background: #222; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+        canvas { background: #333; border: 2px solid #555; }
+        .controls { margin: 10px; padding: 10px; background: #444; border-radius: 8px; }
+        .stats { font-family: monospace; }
+        button { cursor: pointer; padding: 5px 15px; }
+    </style>
+</head>
+<body>
+    <h1>Moving Sofa GA Simulator</h1>
+    <div class="controls">
+        世代: <span id="gen-count">0</span> | 
+        最高面積: <span id="max-area">0</span>
+        <br><br>
+        <button onclick="saveBest()">最高の遺伝子を保存</button>
+        <button onclick="loadGene()">遺伝子を読み込み</button>
+    </div>
+    <div id="container" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
+        </div>
+
+<script>
+const POP_SIZE = 20;
+const GRID_SIZE = 20; // ソファの解像度 (20x5)
+const GENE_LENGTH = 400; // 操作ステップ数
+const PASSAGE_WIDTH = 60; // 通路の幅
+
+class Sofa {
+    constructor(gene = null) {
+        // 初期形状: 幅1(60px), 長さ4(240px)の長方形
+        // セル1つを3pxとして 20x80 のグリッドで表現
+        this.cells = Array(20).fill().map(() => Array(80).fill(true));
+        this.x = 20; 
+        this.y = 150;
+        this.rotation = 0;
+        this.gene = gene || this.randomGene();
+        this.step = 0;
+        this.alive = true;
+        this.area = 20 * 80;
+    }
+
+    randomGene() {
+        const actions = ['up', 'down', 'left', 'right', 'rotate_cw', 'rotate_ccw'];
+        return Array(GENE_LENGTH).fill().map(() => actions[Math.floor(Math.random() * actions.length)]);
+    }
+
+    update() {
+        if (!this.alive || this.step >= GENE_LENGTH) return;
+
+        let action = this.gene[this.step];
+        if (action === 'up') this.y -= 2;
+        if (action === 'down') this.y += 2;
+        if (action === 'left') this.x -= 2;
+        if (action === 'right') this.x += 2;
+        if (action === 'rotate_cw') this.rotation += 0.05;
+        if (action === 'rotate_ccw') this.rotation -= 0.05;
+
+        this.checkCollision();
+        this.step++;
+    }
+
+    checkCollision() {
+        let currentArea = 0;
+        for (let r = 0; r < 20; r++) {
+            for (let c = 0; c < 80; c++) {
+                if (!this.cells[r][c]) continue;
+
+                // セルのグローバル座標計算
+                let cx = this.x + (c - 40) * Math.cos(this.rotation) - (r - 10) * Math.sin(this.rotation);
+                let cy = this.y + (c - 40) * Math.sin(this.rotation) + (r - 10) * Math.cos(this.rotation);
+
+                // L字通路の判定 (簡易版)
+                let inPassage = false;
+                // 横通路
+                if (cy > 100 && cy < 100 + PASSAGE_WIDTH && cx < 200) inPassage = true;
+                // 縦通路
+                if (cx > 140 && cx < 140 + PASSAGE_WIDTH && cy < 200) inPassage = true;
+
+                if (!inPassage) {
+                    this.cells[r][c] = false; // 削削
+                } else {
+                    currentArea++;
+                }
+            }
+        }
+        this.area = currentArea;
+        if (this.area === 0) this.alive = false;
+    }
+}
+
+// --- GA 管理ロジック ---
+let population = Array(POP_SIZE).fill().map(() => new Sofa());
+let generation = 0;
+
+function nextGeneration() {
+    // 評価: (進捗 × 面積) でソート
+    population.sort((a, b) => (b.area + b.x) - (a.area + a.x));
+    
+    let best = population[0];
+    document.getElementById('gen-count').innerText = generation;
+    document.getElementById('max-area').innerText = best.area;
+
+    let newPop = [];
+    // エリート保存
+    newPop.push(new Sofa(best.gene));
+    
+    while(newPop.length < POP_SIZE) {
+        // 交叉と変異
+        let parent = population[Math.floor(Math.random() * 5)].gene; // 上位5位から
+        let childGene = [...parent];
+        if (Math.random() < 0.3) { // 変異
+            childGene[Math.floor(Math.random() * GENE_LENGTH)] = (new Sofa()).randomGene()[0];
+        }
+        newPop.push(new Sofa(childGene));
+    }
+    population = newPop;
+    generation++;
+}
+
+// --- 描画ロジック ---
+const canvases = [];
+const ctxs = [];
+for(let i=0; i<POP_SIZE; i++) {
+    const cvs = document.createElement('canvas');
+    cvs.width = 300; cvs.height = 300;
+    document.getElementById('container').appendChild(cvs);
+    canvases.push(cvs);
+    ctxs.push(cvs.getContext('2d'));
+}
+
+function draw() {
+    population.forEach((sofa, i) => {
+        const ctx = ctxs[i];
+        ctx.clearRect(0, 0, 300, 300);
+        
+        // 通路の描画
+        ctx.strokeStyle = "#888";
+        ctx.beginPath();
+        ctx.moveTo(0, 100); ctx.lineTo(200, 100); ctx.lineTo(200, 0);
+        ctx.moveTo(0, 160); ctx.lineTo(140, 160); ctx.lineTo(140, 0);
+        ctx.stroke();
+
+        // ソファの描画
+        ctx.fillStyle = sofa.alive ? "cyan" : "red";
+        ctx.save();
+        ctx.translate(sofa.x, sofa.y);
+        ctx.rotate(sofa.rotation);
+        for(let r=0; r<20; r++) {
+            for(let c=0; c<80; c++) {
+                if(sofa.cells[r][c]) ctx.fillRect(c-40, r-10, 1, 1);
+            }
+        }
+        ctx.restore();
+        
+        sofa.update();
+    });
+
+    if (population.every(s => !s.alive || s.step >= GENE_LENGTH)) {
+        nextGeneration();
+    }
+    requestAnimationFrame(draw);
+}
+
+function saveBest() {
+    const data = JSON.stringify(population[0].gene);
+    const blob = new Blob([data], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `sofa_gene_gen${generation}.json`;
+    a.click();
+}
+
+function loadGene() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = e => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = () => {
+            const gene = JSON.parse(reader.result);
+            population = Array(POP_SIZE).fill().map(() => new Sofa(gene));
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+}
+
+draw();
+</script>
+</body>
+</html>
