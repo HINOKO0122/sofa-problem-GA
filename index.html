@@ -110,23 +110,47 @@ class Sofa {
         for(let i=0; i < INITIAL_AREA; i++) this.activeIndices[i] = i;
         this.activeCount = INITIAL_AREA;
         this.area = this.activeCount;
+        this.vx = 0; // 現在の横速度
+        this.vy = 0; // 現在の縦速度
+        this.vr = 0; // 現在の回転速度
     }
 
     update() {
-        if (!this.alive || this.finished || this.step >= STEP_LIMIT) return;
-        const g = this.gene[this.step];
-        
-        // 【修正】一定以下の微小な値は「0」と見なす
-        const thresholdV = 0.05; // 速度のしきい値
-        const thresholdR = 0.0001; // 回転のしきい値
+    if (!this.alive || this.finished || this.step >= STEP_LIMIT) return;
+    
+    const g = this.gene[this.step];
+    const friction = 0.92; // 摩擦係数（1に近いほど滑り、小さいほどすぐ止まる）
 
-        if (Math.abs(g.vr) > thresholdR) this.rotation += g.vr;
-        if (Math.abs(g.vx) > thresholdV) this.x += g.vx;
-        if (Math.abs(g.vy) > thresholdV) this.y += g.vy;
-
-        this.checkCollision();
-        this.step++;
+    // 遺伝子を「加速度」として扱う
+    // モード選択と組み合わせて、必要な軸にだけ力を加える
+    switch(g.mode) {
+        case 1: // 移動アクセル
+            this.vx += g.vx * 0.1; 
+            this.vy += g.vy * 0.1;
+            break;
+        case 2: // 回転アクセル
+            this.vr += g.vr * 0.1;
+            break;
+        case 3: // 両方アクセル
+            this.vx += g.vx * 0.1;
+            this.vy += g.vy * 0.1;
+            this.vr += g.vr * 0.1;
+            break;
     }
+
+    // 摩擦で速度を減衰させる（これがプルプルを抑える！）
+    this.vx *= friction;
+    this.vy *= friction;
+    this.vr *= friction;
+
+    // 最終的な位置更新
+    this.x += this.vx;
+    this.y += this.vy;
+    this.rotation += this.vr;
+
+    this.checkCollision();
+    this.step++;
+}
 
     checkCollision() {
         const cos = Math.cos(this.rotation);
