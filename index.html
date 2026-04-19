@@ -126,7 +126,6 @@ class Sofa {
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
         let newCount = 0;
-        let allInGoal = true;
 
         for (let i = 0; i < this.activeCount; i++) {
             const idx = this.activeIndices[i];
@@ -137,18 +136,24 @@ class Sofa {
             const cx = this.x + ox * cos - oy * sin;
             const cy = this.y + ox * sin + oy * cos;
 
+            // 通路判定
             const inA = (cx >= 0 && cx <= UNIT * 6 && cy >= 0 && cy <= UNIT);
             const inB = (cx >= UNIT * 5 && cx <= UNIT * 6 && cy >= 0 && cy <= UNIT * 8);
 
             if (inA || inB) {
                 this.activeIndices[newCount++] = idx;
-                if (cx < UNIT * 5) allInGoal = false;
             }
         }
         this.activeCount = newCount;
         this.area = newCount;
+
         if (this.area <= 0) this.alive = false;
-        if (this.area > 0 && allInGoal && this.y > UNIT * 3) this.finished = true;
+
+        // 【修正】成功判定を「中心が縦通路の入り口を越えたら」に変更
+        // x座標が 5*UNIT (縦通路の左端) を超えて、少し下に下がれば成功！
+        if (this.area > 0 && this.x > UNIT * 5.2 && this.y > UNIT * 1.1) {
+            this.finished = true;
+        }
     }
 
     removeIslands() {
