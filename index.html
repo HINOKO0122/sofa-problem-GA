@@ -2,33 +2,38 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: Ultra-Fast High-Res</title>
+    <title>Sofa Problem: Refined Physics & UI</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
         .controls { background: #222; padding: 15px; border-radius: 10px; width: 90%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; margin-top: 10px; }
         .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; padding: 10px; }
-        canvas { background: #000; border: 1px solid #333; width: 180px; height: 140px; }
-        button { padding: 10px 20px; cursor: pointer; background: #00d4ff; color: #000; border: none; border-radius: 5px; font-weight: bold; }
-        .debug-info { font-size: 0.8rem; color: #888; margin-top: 5px; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 20px; }
+        canvas { background: #000; border: 1px solid #333; width: 200px; height: 160px; }
+        .io-panel { margin: 15px; display: flex; gap: 10px; }
+        button, label { padding: 10px 20px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-weight: bold; }
+        button:hover, label:hover { background: #00d4ff; color: #000; }
     </style>
 </head>
 <body>
-    <h1>⚡ 高速・高精度ソファGA (30,000セル)</h1>
+    <h1>⚡ 高精度ソファGA (物理判定修正版)</h1>
     
     <div class="controls">
         <div>世代: <span id="gen-label" class="stat-val">1</span></div>
         <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
         <div>完走: <span id="finish-label" class="stat-val">0</span></div>
-        <button onclick="exportJSON()">JSON出力</button>
     </div>
-    <div class="debug-info">※描画を間引いて計算速度を優先しています。完走時・終了時に飛び地を自動排除します。</div>
+
+    <div class="io-panel">
+        <button onclick="exportJSON()">JSON保存</button>
+        <label for="fileInput">JSON読込</label>
+        <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
+    </div>
 
     <div id="canvas-grid"></div>
 
 <script>
 const TOTAL_POP = 100;
-const DISPLAY_COUNT = 20;
+const DISPLAY_COUNT = 10; // 10体に削減
 const UNIT = 40; 
 const STEP_LIMIT = 800;
 const COLS = 300;
@@ -60,8 +65,6 @@ class Sofa {
         this.step = 0;
         this.alive = true;
         this.finished = false;
-        
-        // アクティブなセルのインデックスのみを保持（高速化のキモ）
         this.activeIndices = new Int32Array(COLS * ROWS);
         for(let i=0; i < COLS*ROWS; i++) this.activeIndices[i] = i;
         this.activeCount = COLS * ROWS;
@@ -70,17 +73,12 @@ class Sofa {
 
     update() {
         if (!this.alive || this.finished || this.step >= STEP_LIMIT) return;
-
         const g = this.gene[this.step];
         this.rotation += g.vr;
         this.x += g.vx;
         this.y += g.vy;
-
         this.checkCollision();
         this.step++;
-
-        // 完走した瞬間に一度だけ飛び地チェック
-        if (this.finished) this.removeIslands();
     }
 
     checkCollision() {
@@ -99,11 +97,15 @@ class Sofa {
             const cx = this.x + ox * cos - oy * sin;
             const cy = this.y + ox * sin + oy * cos;
 
-            const inA = (cx >= 0 && cx <= UNIT * 6 && cy >= 100 && cy <= 100 + UNIT);
+            // 物理判定の修正: 通路の「枠」を厳密に
+            // 横通路: yが100〜140の間である必要がある
+            const inA = (cx >= 0 && cx <= UNIT * 5 && cy >= 100 && cy <= 100 + UNIT);
+            // 縦通路: xが160〜200の間である必要がある
             const inB = (cx >= UNIT * 4 && cx <= UNIT * 5 && cy >= 0 && cy <= 100 + UNIT);
 
             if (inA || inB) {
                 this.activeIndices[newCount++] = idx;
+                // 完走判定: y座標が100未満（縦通路の奥）に完全に入ったか
                 if (cy > 100) allInGoal = false;
             }
         }
@@ -116,70 +118,48 @@ class Sofa {
 
     removeIslands() {
         if (this.activeCount === 0) return;
-        
         const grid = new Uint8Array(COLS * ROWS).fill(0);
         for(let i=0; i<this.activeCount; i++) grid[this.activeIndices[i]] = 1;
-
         const visited = new Uint8Array(COLS * ROWS).fill(0);
         let maxGroup = [];
 
         for (let i = 0; i < this.activeCount; i++) {
             const startIdx = this.activeIndices[i];
             if (visited[startIdx]) continue;
-
             let currentGroup = [];
             let stack = [startIdx];
             visited[startIdx] = 1;
-
             while (stack.length > 0) {
                 let idx = stack.pop();
                 currentGroup.push(idx);
-                const r = (idx / COLS) | 0;
-                const c = idx % COLS;
-
-                const neighbors = [];
-                if (r > 0) neighbors.push(idx - COLS);
-                if (r < ROWS - 1) neighbors.push(idx + COLS);
-                if (c > 0) neighbors.push(idx - 1);
-                if (c < COLS - 1) neighbors.push(idx + 1);
-
-                for (let n of neighbors) {
-                    if (grid[n] === 1 && !visited[n]) {
-                        visited[n] = 1;
-                        stack.push(n);
-                    }
-                }
+                const r = (idx / COLS) | 0; const c = idx % COLS;
+                const ns = [];
+                if (r > 0) ns.push(idx - COLS); if (r < ROWS - 1) ns.push(idx + COLS);
+                if (c > 0) ns.push(idx - 1); if (c < COLS - 1) ns.push(idx + 1);
+                for (let n of ns) { if (grid[n] === 1 && !visited[n]) { visited[n] = 1; stack.push(n); } }
             }
             if (currentGroup.length > maxGroup.length) maxGroup = currentGroup;
         }
-
-        // 最大グループ以外を削除
         this.activeCount = maxGroup.length;
-        for (let i = 0; i < maxGroup.length; i++) {
-            this.activeIndices[i] = maxGroup[i];
-        }
+        for (let i = 0; i < maxGroup.length; i++) this.activeIndices[i] = maxGroup[i];
         this.area = this.activeCount;
     }
 
     draw(ctx) {
         ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.fillStyle = "#333";
-        ctx.fillRect(0, 100, UNIT * 5, UNIT); 
-        ctx.fillRect(UNIT * 4, 0, UNIT, 110);
+        ctx.fillRect(0, 100, UNIT * 4, UNIT); // 横通路 (角の手前まで)
+        ctx.fillRect(UNIT * 4, 0, UNIT, 100 + UNIT); // 縦通路 + 角
         
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
 
-        // 描画間引き: 高精度すぎて重いため、セルの4つに1つだけ描画して高速化
         for (let i = 0; i < this.activeCount; i += 4) {
             const idx = this.activeIndices[i];
-            const r = (idx / COLS) | 0;
-            const c = idx % COLS;
-            const ox = (c - COLS / 2) * CELL_SIZE;
-            const oy = (r - ROWS / 2) * CELL_SIZE;
-            const cx = this.x + ox * cos - oy * sin;
-            const cy = this.y + ox * sin + oy * cos;
+            const r = (idx / COLS) | 0; const c = idx % COLS;
+            const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
+            const cx = this.x + ox * cos - oy * sin; const cy = this.y + ox * sin + oy * cos;
             ctx.fillRect(cx, cy, 2, 2);
         }
     }
@@ -187,41 +167,29 @@ class Sofa {
 
 let sofas = [];
 let generation = 1;
-let frameCount = 0;
 const ctxs = [];
 
 function init() {
     const grid = document.getElementById('canvas-grid');
-    for (let i = 0; i < TOTAL_POP; i++) {
-        if (i < DISPLAY_COUNT) {
-            const cvs = document.createElement('canvas');
-            cvs.width = 240; cvs.height = 160;
-            grid.appendChild(cvs);
-            ctxs.push(cvs.getContext('2d'));
-        }
-        sofas.push(new Sofa());
+    grid.innerHTML = ""; // 初期化
+    for (let i = 0; i < DISPLAY_COUNT; i++) {
+        const cvs = document.createElement('canvas');
+        cvs.width = 240; cvs.height = 180;
+        grid.appendChild(cvs);
+        ctxs.push(cvs.getContext('2d'));
     }
+    for (let i = 0; i < TOTAL_POP; i++) sofas.push(new Sofa());
     requestAnimationFrame(loop);
 }
 
 function loop() {
     let living = false;
-    // 物理計算は毎フレーム全力で回す
     for (let i = 0; i < TOTAL_POP; i++) {
         sofas[i].update();
+        if (i < DISPLAY_COUNT) sofas[i].draw(ctxs[i]);
         if (sofas[i].alive && !sofas[i].finished && sofas[i].step < STEP_LIMIT) living = true;
     }
-
-    // 描画は2フレームに1回に間引く
-    if (frameCount % 2 === 0) {
-        for (let i = 0; i < DISPLAY_COUNT; i++) {
-            sofas[i].draw(ctxs[i]);
-        }
-    }
-    frameCount++;
-
     if (!living) {
-        // 全滅または終了時に最終チェック（飛び地排除）
         sofas.forEach(s => s.removeIslands());
         evolve();
     } else {
@@ -254,10 +222,25 @@ function evolve() {
 function exportJSON() {
     const data = JSON.stringify({ gen: generation, gene: sofas[0].gene });
     const blob = new Blob([data], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `sofa_speed_tuned.json`;
+    a.href = URL.createObjectURL(blob);
+    a.download = `sofa_gen${generation}.json`;
     a.click();
+}
+
+function importJSON(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const imported = JSON.parse(e.target.result);
+        sofas.forEach(s => {
+            s.gene = JSON.parse(JSON.stringify(imported.gene));
+            s.reset();
+        });
+        generation = imported.gen || 1;
+    };
+    reader.readAsText(file);
 }
 
 init();
