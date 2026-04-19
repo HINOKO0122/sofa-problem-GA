@@ -115,9 +115,15 @@ class Sofa {
     update() {
         if (!this.alive || this.finished || this.step >= STEP_LIMIT) return;
         const g = this.gene[this.step];
-        this.rotation += g.vr;
-        this.x += g.vx;
-        this.y += g.vy;
+        
+        // 【修正】一定以下の微小な値は「0」と見なす
+        const thresholdV = 0.05; // 速度のしきい値
+        const thresholdR = 0.0001; // 回転のしきい値
+
+        if (Math.abs(g.vr) > thresholdR) this.rotation += g.vr;
+        if (Math.abs(g.vx) > thresholdV) this.x += g.vx;
+        if (Math.abs(g.vy) > thresholdV) this.y += g.vy;
+
         this.checkCollision();
         this.step++;
     }
