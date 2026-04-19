@@ -1,194 +1,292 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
-    <title>Moving Sofa GA Solver</title>
+    <meta charset="UTF-8">
+    <title>Sofa Problem GA: Target Goal!</title>
     <style>
-        body { background: #222; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
-        canvas { background: #333; border: 2px solid #555; }
-        .controls { margin: 10px; padding: 10px; background: #444; border-radius: 8px; }
-        .stats { font-family: monospace; }
-        button { cursor: pointer; padding: 5px 15px; }
+        body { background: #1a1a1a; color: #eee; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
+        h1 { margin: 10px 0; font-size: 20px; color: #00d4ff; }
+        #main-container { display: flex; gap: 20px; padding: 10px; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+        canvas { background: #222; border: 1px solid #444; }
+        .sidebar { width: 250px; background: #333; padding: 15px; border-radius: 8px; font-size: 13px; }
+        .stats-box { background: #000; padding: 10px; border-radius: 4px; margin-bottom: 10px; border-left: 4px solid #00d4ff; }
+        button { background: #00d4ff; border: none; padding: 8px; width: 100%; cursor: pointer; font-weight: bold; margin-bottom: 5px; border-radius: 4px; }
+        button:hover { background: #0099bb; }
+        textarea { width: 100%; height: 150px; background: #222; color: #0f0; font-size: 10px; border: 1px solid #555; }
     </style>
 </head>
 <body>
-    <h1>Moving Sofa GA Simulator</h1>
-    <div class="controls">
-        世代: <span id="gen-count">0</span> | 
-        最高面積: <span id="max-area">0</span>
-        <br><br>
-        <button onclick="saveBest()">最高の遺伝子を保存</button>
-        <button onclick="loadGene()">遺伝子を読み込み</button>
-    </div>
-    <div id="container" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
+    <h1>🛋️ Moving Sofa Problem: GA Solver</h1>
+    
+    <div id="main-container">
+        <div id="canvas-grid"></div>
+
+        <div class="sidebar">
+            <div class="stats-box">
+                <div>世代: <span id="gen-label">0</span></div>
+                <div>最高進捗: <span id="progress-label">0</span>%</div>
+                <div>最高面積: <span id="area-label">0</span></div>
+            </div>
+            <button onclick="exportBest()">ベスト個体の遺伝子を出力</button>
+            <p>保存された遺伝子データ:</p>
+            <textarea id="gene-data" placeholder="ここに遺伝子が出力されます。コピペで保存可能です。"></textarea>
+            <button onclick="importGene()" style="background:#555;">遺伝子を読み込んで適用</button>
+            <div style="margin-top:10px; font-size:11px; color:#aaa;">
+                ※青色は生存、赤色は全滅。<br>
+                まずは右側の通路(ゴール)へ到達することを目指します。
+            </div>
         </div>
+    </div>
 
 <script>
+/** * 定数設定
+ */
 const POP_SIZE = 20;
-const GRID_SIZE = 20; // ソファの解像度 (20x5)
-const GENE_LENGTH = 400; // 操作ステップ数
-const PASSAGE_WIDTH = 60; // 通路の幅
+const GENE_LENGTH = 500; // 1個体あたりの行動ステップ数
+const PASSAGE_WIDTH = 50; // 通路の幅
+const SOFA_W = 120; // 身体の初期幅
+const SOFA_H = 30;  // 身体の初期高さ
+const RESOLUTION = 3; // セルの大きさ（小さいほど高精度だが重い）
 
+/**
+ * 遺伝子クラス: 動きと回転軸のセット
+ */
+class Gene {
+    constructor(commands = null) {
+        if (commands) {
+            this.commands = commands;
+        } else {
+            this.commands = [];
+            for (let i = 0; i < GENE_LENGTH; i++) {
+                this.commands.push({
+                    vx: (Math.random() - 0.2) * 4, // 前進しやすく
+                    vy: (Math.random() - 0.5) * 4,
+                    vr: (Math.random() - 0.5) * 0.15, // 回転
+                    px: (Math.random() - 0.5) * SOFA_W, // 回転軸X
+                    py: (Math.random() - 0.5) * SOFA_H  // 回転軸Y
+                });
+            }
+        }
+    }
+}
+
+/**
+ * ソファ個体クラス
+ */
 class Sofa {
-    constructor(gene = null) {
-        // 初期形状: 幅1(60px), 長さ4(240px)の長方形
-        // セル1つを3pxとして 20x80 のグリッドで表現
-        this.cells = Array(20).fill().map(() => Array(80).fill(true));
-        this.x = 20; 
-        this.y = 150;
-        this.rotation = 0;
-        this.gene = gene || this.randomGene();
-        this.step = 0;
-        this.alive = true;
-        this.area = 20 * 80;
+    constructor(index, gene = null) {
+        this.index = index;
+        this.gene = gene || new Gene();
+        this.reset();
+        this.setupCanvas();
     }
 
-    randomGene() {
-        const actions = ['up', 'down', 'left', 'right', 'rotate_cw', 'rotate_ccw'];
-        return Array(GENE_LENGTH).fill().map(() => actions[Math.floor(Math.random() * actions.length)]);
+    reset() {
+        this.x = 40;
+        this.y = 120;
+        this.rotation = 0;
+        this.step = 0;
+        this.alive = true;
+        this.finished = false;
+        this.maxProgress = 0;
+        
+        // 身体の生成 (グリッド表現)
+        this.cells = [];
+        for (let y = 0; y < SOFA_H; y += RESOLUTION) {
+            for (let x = 0; x < SOFA_W; x += RESOLUTION) {
+                this.cells.push({ ox: x - SOFA_W / 2, oy: y - SOFA_H / 2, active: true });
+            }
+        }
+        this.area = this.cells.length;
+    }
+
+    setupCanvas() {
+        const grid = document.getElementById('canvas-grid');
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = 250;
+        this.canvas.height = 200;
+        grid.appendChild(this.canvas);
+        this.ctx = this.canvas.getContext('2d');
     }
 
     update() {
         if (!this.alive || this.step >= GENE_LENGTH) return;
 
-        let action = this.gene[this.step];
-        if (action === 'up') this.y -= 2;
-        if (action === 'down') this.y += 2;
-        if (action === 'left') this.x -= 2;
-        if (action === 'right') this.x += 2;
-        if (action === 'rotate_cw') this.rotation += 0.05;
-        if (action === 'rotate_ccw') this.rotation -= 0.05;
+        const cmd = this.gene.commands[this.step];
+
+        // 回転軸を中心とした座標変換を伴う移動
+        const rad = this.rotation;
+        // 軸のグローバル座標
+        const pivotGX = this.x + cmd.px * Math.cos(rad) - cmd.py * Math.sin(rad);
+        const pivotGY = this.y + cmd.px * Math.sin(rad) + cmd.py * Math.cos(rad);
+
+        this.rotation += cmd.vr;
+        this.x += cmd.vx;
+        this.y += cmd.vy;
 
         this.checkCollision();
+        
+        // 進捗評価 (X座標が右に行くほど優秀)
+        if (this.x > this.maxProgress) this.maxProgress = this.x;
+        if (this.x > 220) this.finished = true; // ゴール判定
+
         this.step++;
     }
 
     checkCollision() {
-        let currentArea = 0;
-        for (let r = 0; r < 20; r++) {
-            for (let c = 0; c < 80; c++) {
-                if (!this.cells[r][c]) continue;
+        let activeCount = 0;
+        for (let cell of this.cells) {
+            if (!cell.active) continue;
 
-                // セルのグローバル座標計算
-                let cx = this.x + (c - 40) * Math.cos(this.rotation) - (r - 10) * Math.sin(this.rotation);
-                let cy = this.y + (c - 40) * Math.sin(this.rotation) + (r - 10) * Math.cos(this.rotation);
+            const rad = this.rotation;
+            const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
+            const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
 
-                // L字通路の判定 (簡易版)
-                let inPassage = false;
-                // 横通路
-                if (cy > 100 && cy < 100 + PASSAGE_WIDTH && cx < 200) inPassage = true;
-                // 縦通路
-                if (cx > 140 && cx < 140 + PASSAGE_WIDTH && cy < 200) inPassage = true;
+            // 通路判定 (L字)
+            let inside = false;
+            // 横向き通路
+            if (cy > 100 && cy < 100 + PASSAGE_WIDTH && cx < 180) inside = true;
+            // 縦向き通路
+            if (cx > 130 && cx < 130 + PASSAGE_WIDTH && cy < 200) inside = true;
 
-                if (!inPassage) {
-                    this.cells[r][c] = false; // 削削
-                } else {
-                    currentArea++;
-                }
+            if (!inside) {
+                cell.active = false;
+            } else {
+                activeCount++;
             }
         }
-        this.area = currentArea;
-        if (this.area === 0) this.alive = false;
+        this.area = activeCount;
+        if (this.area <= 0) this.alive = false;
     }
-}
 
-// --- GA 管理ロジック ---
-let population = Array(POP_SIZE).fill().map(() => new Sofa());
-let generation = 0;
+    draw() {
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, 250, 200);
 
-function nextGeneration() {
-    // 評価: (進捗 × 面積) でソート
-    population.sort((a, b) => (b.area + b.x) - (a.area + a.x));
-    
-    let best = population[0];
-    document.getElementById('gen-count').innerText = generation;
-    document.getElementById('max-area').innerText = best.area;
-
-    let newPop = [];
-    // エリート保存
-    newPop.push(new Sofa(best.gene));
-    
-    while(newPop.length < POP_SIZE) {
-        // 交叉と変異
-        let parent = population[Math.floor(Math.random() * 5)].gene; // 上位5位から
-        let childGene = [...parent];
-        if (Math.random() < 0.3) { // 変異
-            childGene[Math.floor(Math.random() * GENE_LENGTH)] = (new Sofa()).randomGene()[0];
-        }
-        newPop.push(new Sofa(childGene));
-    }
-    population = newPop;
-    generation++;
-}
-
-// --- 描画ロジック ---
-const canvases = [];
-const ctxs = [];
-for(let i=0; i<POP_SIZE; i++) {
-    const cvs = document.createElement('canvas');
-    cvs.width = 300; cvs.height = 300;
-    document.getElementById('container').appendChild(cvs);
-    canvases.push(cvs);
-    ctxs.push(cvs.getContext('2d'));
-}
-
-function draw() {
-    population.forEach((sofa, i) => {
-        const ctx = ctxs[i];
-        ctx.clearRect(0, 0, 300, 300);
-        
-        // 通路の描画
-        ctx.strokeStyle = "#888";
+        // 通路描画
+        ctx.strokeStyle = "#666";
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(0, 100); ctx.lineTo(200, 100); ctx.lineTo(200, 0);
-        ctx.moveTo(0, 160); ctx.lineTo(140, 160); ctx.lineTo(140, 0);
+        ctx.moveTo(0, 100); ctx.lineTo(180, 100); ctx.lineTo(180, 0);
+        ctx.moveTo(0, 150); ctx.lineTo(130, 150); ctx.lineTo(130, 200);
         ctx.stroke();
 
-        // ソファの描画
-        ctx.fillStyle = sofa.alive ? "cyan" : "red";
-        ctx.save();
-        ctx.translate(sofa.x, sofa.y);
-        ctx.rotate(sofa.rotation);
-        for(let r=0; r<20; r++) {
-            for(let c=0; c<80; c++) {
-                if(sofa.cells[r][c]) ctx.fillRect(c-40, r-10, 1, 1);
-            }
+        // ゴール線
+        ctx.strokeStyle = "#0f0";
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(220, 100, 10, 50);
+        ctx.setLineDash([]);
+
+        // ソファ描画
+        ctx.fillStyle = this.alive ? (this.finished ? "#ff0" : "#00d4ff") : "#ff4444";
+        for (let cell of this.cells) {
+            if (!cell.active) continue;
+            const rad = this.rotation;
+            const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
+            const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
+            ctx.fillRect(cx, cy, RESOLUTION, RESOLUTION);
         }
-        ctx.restore();
-        
-        sofa.update();
+    }
+}
+
+/**
+ * GA 管理エンジン
+ */
+let population = [];
+let generation = 1;
+let bestGeneOverall = null;
+
+function init() {
+    for (let i = 0; i < POP_SIZE; i++) {
+        population.push(new Sofa(i));
+    }
+    loop();
+}
+
+function loop() {
+    let allDone = true;
+    population.forEach(s => {
+        s.update();
+        s.draw();
+        if (s.alive && s.step < GENE_LENGTH && !s.finished) allDone = false;
     });
 
-    if (population.every(s => !s.alive || s.step >= GENE_LENGTH)) {
-        nextGeneration();
+    if (allDone) {
+        evolve();
+    } else {
+        requestAnimationFrame(loop);
     }
-    requestAnimationFrame(draw);
 }
 
-function saveBest() {
-    const data = JSON.stringify(population[0].gene);
-    const blob = new Blob([data], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `sofa_gene_gen${generation}.json`;
-    a.click();
+function evolve() {
+    // 評価関数: ゴール到達したか > 進捗距離 > 面積
+    population.sort((a, b) => {
+        const scoreA = (a.finished ? 100000 : 0) + (a.maxProgress * 100) + a.area;
+        const scoreB = (b.finished ? 100000 : 0) + (b.maxProgress * 100) + b.area;
+        return scoreB - scoreA;
+    });
+
+    const best = population[0];
+    bestGeneOverall = best.gene;
+    document.getElementById('gen-label').innerText = generation;
+    document.getElementById('progress-label').innerText = Math.min(100, (best.maxProgress / 220 * 100).toFixed(1));
+    document.getElementById('area-label').innerText = best.area;
+
+    const newGenes = [];
+    // エリート(上位2個体)をコピー
+    newGenes.push(new Gene([...best.gene.commands]));
+    newGenes.push(new Gene([...population[1].gene.commands]));
+
+    while (newGenes.length < POP_SIZE) {
+        // 上位個体から親を選択（ルーレット選択の簡易版）
+        const p1 = population[Math.floor(Math.random() * 5)].gene;
+        const p2 = population[Math.floor(Math.random() * 5)].gene;
+        
+        const childCommands = [];
+        for (let j = 0; j < GENE_LENGTH; j++) {
+            // 交叉
+            let cmd = Math.random() > 0.5 ? {...p1.commands[j]} : {...p2.commands[j]};
+            // 変異
+            if (Math.random() < 0.05) {
+                cmd.vr += (Math.random() - 0.5) * 0.1;
+                cmd.vx += (Math.random() - 0.5) * 2;
+                cmd.px += (Math.random() - 0.5) * 10;
+            }
+            childCommands.push(cmd);
+        }
+        newGenes.push(new Gene(childCommands));
+    }
+
+    // 次世代のセットアップ
+    population.forEach((s, i) => {
+        s.gene = newGenes[i];
+        s.reset();
+    });
+
+    generation++;
+    requestAnimationFrame(loop);
 }
 
-function loadGene() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.onchange = e => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.onload = () => {
-            const gene = JSON.parse(reader.result);
-            population = Array(POP_SIZE).fill().map(() => new Sofa(gene));
-        };
-        reader.readAsText(file);
-    };
-    input.click();
+function exportBest() {
+    if (bestGeneOverall) {
+        document.getElementById('gene-data').value = JSON.stringify(bestGeneOverall.commands);
+    }
 }
 
-draw();
+function importGene() {
+    const data = document.getElementById('gene-data').value;
+    if (data) {
+        const commands = JSON.parse(data);
+        population.forEach(s => {
+            s.gene = new Gene(commands);
+            s.reset();
+        });
+        generation = 1;
+    }
+}
+
+init();
 </script>
 </body>
 </html>
