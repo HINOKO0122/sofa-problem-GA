@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa GA: Physics & Save Fixed</title>
+    <title>Sofa GA: Precision Tuning</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
         .header { background: #222; padding: 15px; width: 100%; text-align: center; border-bottom: 3px solid #00ff88; }
@@ -12,7 +12,7 @@
         .stat-val { color: #00ff88; font-weight: bold; font-family: monospace; font-size: 1.2rem; }
         .slider-group { display: flex; flex-direction: column; gap: 5px; }
         .slider-group label { font-size: 0.85rem; color: #00ff88; }
-        input[type=range] { cursor: pointer; accent-color: #00ff88; }
+        input[type=range] { cursor: pointer; accent-color: #00ff88; width: 100%; }
         #canvas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex-grow: 1; }
         canvas { background: #000; border: 1px solid #444; width: 100%; height: auto; aspect-ratio: 1/1; }
         button { padding: 8px; cursor: pointer; background: #333; color: #00ff88; border: 1px solid #00ff88; border-radius: 5px; font-size: 0.8rem; margin-top: 5px; }
@@ -21,7 +21,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>📐 物理ベース：1:4 ソファGA（保存機能修正版）</h1>
+        <h1>📐 精密チューニング：1:4 ソファGA</h1>
     </div>
 
     <div class="main-layout">
@@ -33,16 +33,17 @@
             </div>
 
             <div class="slider-group">
-                <label>加速度変異 (VX/VY): <span id="val-v-mut">0.80</span></label>
-                <input type="range" id="mut-v" min="0.1" max="3.0" step="0.1" value="0.80" oninput="updateParams()">
+                <label>加速度変異 (VX/VY): <span id="val-v-mut">0.10</span></label>
+                <input type="range" id="mut-v" min="0.01" max="1.5" step="0.01" value="0.10" oninput="updateParams()">
             </div>
             <div class="slider-group">
-                <label>回転加速度変異 (VR): <span id="val-r-mut">0.0020</span></label>
-                <input type="range" id="mut-r" min="0.0001" max="0.01" step="0.0001" value="0.0020" oninput="updateParams()">
+                <label>回転加速度変異 (VR): <span id="val-r-mut">0.00050</span></label>
+                <input type="range" id="mut-r" min="0.00001" max="0.005" step="0.00001" value="0.00050" oninput="updateParams()">
             </div>
 
             <div style="font-size: 0.75rem; color: #888; border-top: 1px solid #333; padding-top: 10px;">
-                <strong>体積定義:</strong> 生存セル数 / 10,000
+                <strong>ヒント:</strong><br>
+                良い動きが見つかったら変異率を極限まで下げると、微修正モードに入ります。
             </div>
 
             <button onclick="exportJSON()">JSON保存</button>
@@ -54,6 +55,7 @@
     </div>
 
 <script>
+// --- 基本設定 ---
 const TOTAL_POP = 100;
 const DISPLAY_COUNT = 6;
 const UNIT = 60;
@@ -63,14 +65,14 @@ const ROWS = 100;
 const INITIAL_AREA = COLS * ROWS;
 const CELL_SIZE = UNIT / ROWS;
 
-let mutationRateV = 0.80;
-let mutationRateR = 0.0020;
+let mutationRateV = 0.10;
+let mutationRateR = 0.00050;
 
 function updateParams() {
     mutationRateV = parseFloat(document.getElementById('mut-v').value);
     mutationRateR = parseFloat(document.getElementById('mut-r').value);
-    document.getElementById('val-v-mut').innerText = mutationRateV.toFixed(2);
-    document.getElementById('val-r-mut').innerText = mutationRateR.toFixed(4);
+    document.getElementById('val-v-mut').innerText = mutationRateV.toFixed(3);
+    document.getElementById('val-r-mut').innerText = mutationRateR.toFixed(5);
 }
 
 class Sofa {
@@ -84,24 +86,18 @@ class Sofa {
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
                 mode: Math.random() < 0.1 ? 0 : (Math.random() < 0.6 ? 1 : (Math.random() < 0.8 ? 2 : 3)),
-                ax: (Math.random() - 0.1) * 2.0,
-                ay: (Math.random() - 0.4) * 2.0,
-                ar: (Math.random() * 0.002) 
+                ax: (Math.random() - 0.1) * 2.5,
+                ay: (Math.random() - 0.4) * 2.5,
+                ar: (Math.random() * 0.003) 
             });
         }
         return commands;
     }
 
     reset() {
-        this.x = UNIT * 2;
-        this.y = UNIT * 0.5;
-        this.rotation = 0;
-        this.vx = 0;
-        this.vy = 0;
-        this.vr = 0;
-        this.step = 0;
-        this.alive = true;
-        this.finished = false;
+        this.x = UNIT * 2; this.y = UNIT * 0.5; this.rotation = 0;
+        this.vx = 0; this.vy = 0; this.vr = 0;
+        this.step = 0; this.alive = true; this.finished = false;
         this.activeIndices = new Int32Array(INITIAL_AREA);
         for(let i=0; i < INITIAL_AREA; i++) this.activeIndices[i] = i;
         this.activeCount = INITIAL_AREA;
@@ -162,8 +158,7 @@ class Sofa {
             let stack = [startIdx];
             visited[startIdx] = 1;
             while (stack.length > 0) {
-                let idx = stack.pop();
-                currentGroup.push(idx);
+                let idx = stack.pop(); currentGroup.push(idx);
                 const r = (idx / COLS) | 0; const c = idx % COLS;
                 const ns = [];
                 if (r > 0) ns.push(idx - COLS); if (r < ROWS - 1) ns.push(idx + COLS);
@@ -244,12 +239,20 @@ function evolve() {
     document.getElementById('area-label').innerText = (best.activeCount / 10000).toFixed(4);
     document.getElementById('finish-label').innerText = sofas.filter(s => s.finished).length;
 
-    const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
+    const nextGen = [];
+    
+    // エリートの保護：上位3個体をそのまま次世代へ
+    for(let i=0; i<3; i++) {
+        nextGen.push(new Sofa(JSON.parse(JSON.stringify(sofas[i].gene))));
+    }
+
     while(nextGen.length < TOTAL_POP) {
-        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 25)].gene;
+        // トーナメント形式で親を選択
+        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 30)].gene;
         const child = p.map(cmd => {
             let newMode = cmd.mode;
-            if (Math.random() < 0.1) newMode = Math.floor(Math.random() * 4);
+            // モード変更の確率も変異率に連動
+            if (Math.random() < mutationRateV * 0.1) newMode = Math.floor(Math.random() * 4);
             return {
                 mode: newMode,
                 ax: cmd.ax + (Math.random()-0.5) * mutationRateV,
@@ -264,14 +267,11 @@ function evolve() {
     requestAnimationFrame(loop);
 }
 
-// --- 保存・読込関数 ---
 function exportJSON() {
     const data = JSON.stringify({ gen: generation, gene: sofas[0].gene });
     const blob = new Blob([data], {type: 'application/json'});
     const a = document.createElement('a'); 
-    a.href = URL.createObjectURL(blob); 
-    a.download = `sofa_gen${generation}.json`; 
-    a.click();
+    a.href = URL.createObjectURL(blob); a.download = `sofa_gen${generation}.json`; a.click();
 }
 
 function importJSON(event) {
@@ -280,10 +280,7 @@ function importJSON(event) {
     const reader = new FileReader();
     reader.onload = (e) => {
         const imported = JSON.parse(e.target.result);
-        sofas.forEach(s => { 
-            s.gene = JSON.parse(JSON.stringify(imported.gene)); 
-            s.reset(); 
-        });
+        sofas.forEach(s => { s.gene = JSON.parse(JSON.stringify(imported.gene)); s.reset(); });
         generation = imported.gen || 1;
     };
     reader.readAsText(file);
