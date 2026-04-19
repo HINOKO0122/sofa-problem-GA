@@ -126,7 +126,7 @@ class Sofa {
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
         let newCount = 0;
-        let anyInTopLane = false; // 上の横通路にドットが残っているかチェック
+        let anyInUpperArea = false; // 横通路、および角の重なり部分にセルがあるか
 
         for (let i = 0; i < this.activeCount; i++) {
             const idx = this.activeIndices[i];
@@ -143,9 +143,11 @@ class Sofa {
 
             if (inA || inB) {
                 this.activeIndices[newCount++] = idx;
-                // ドットが横通路（一番上の段）の範囲に一つでもあればフラグを立てる
-                if (cy <= UNIT && cx < UNIT * 5) {
-                    anyInTopLane = true;
+                
+                // 【重要】cy <= UNIT の場合は、たとえ縦通路の横幅(cx > UNIT*5)に
+                // 入っていても「まだ角に体の一部が残っている」と判定する
+                if (cy <= UNIT) {
+                    anyInUpperArea = true;
                 }
             }
         }
@@ -154,11 +156,11 @@ class Sofa {
 
         if (this.area <= 0) this.alive = false;
 
-        // 【厳格判定】
+        // 【新・厳格判定】
         // 1. 生き残りセルがある
-        // 2. 一番上の横通路にセルが一つも残っていない
-        // 3. ソファの中心が縦通路のエリアにある
-        if (this.area > 0 && !anyInTopLane && this.x > UNIT * 5) {
+        // 2. 「横通路」および「角の1x1エリア」にセルが1つも残っていない
+        // 3. 全てのセルが cy > UNIT (純粋な縦通路) に入っている
+        if (this.area > 0 && !anyInUpperArea) {
             this.finished = true;
         }
     }
