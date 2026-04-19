@@ -2,38 +2,48 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: Strict Geometry Mode</title>
+    <title>Sofa Problem: High-Res Evolution</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 20px; }
-        canvas { background: #1a1a1a; border: 1px solid #333; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .info { background: #222; padding: 15px; border-radius: 10px; margin-top: 10px; width: 80%; display: flex; justify-content: space-around; border-bottom: 3px solid #00d4ff; }
-        .best-log { width: 80%; margin: 10px; }
-        textarea { width: 100%; height: 80px; background: #000; color: #0f0; font-family: monospace; border: 1px solid #444; }
-        b { color: #00d4ff; }
+        h1 { font-size: 1.5rem; margin: 10px; color: #00d4ff; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; padding: 10px; }
+        canvas { background: #1a1a1a; border: 1px solid #333; width: 180px; height: 140px; }
+        .controls { background: #222; padding: 15px; border-radius: 10px; width: 90%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; }
+        .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
+        .io-panel { width: 90%; margin: 15px; display: flex; gap: 10px; }
+        button { flex: 1; padding: 10px; cursor: pointer; background: #333; color: white; border: 1px solid #555; border-radius: 5px; }
+        button:hover { background: #444; }
+        .finished-count { color: #0f0; }
     </style>
 </head>
 <body>
-    <h1>📏 厳密幾何学ソファ GA</h1>
-    <div class="info">
-        <div>世代: <b id="gen-label">1</b></div>
-        <div>最高面積: <b id="area-label">0</b></div>
-        <div>完走数: <b id="finish-label">0</b></div>
+    <h1>📐 高精度・高速ソファGAシミュレーター</h1>
+    
+    <div class="controls">
+        <div>世代: <span id="gen-label" class="stat-val">1</span></div>
+        <div>計算個体数: <span class="stat-val">100</span></div>
+        <div>最高進捗: <span id="progress-label" class="stat-val">0</span>%</div>
+        <div>最高面積: <span id="area-label" class="stat-val">0</span></div>
+        <div>完走成功: <span id="finish-label" class="stat-val finished-count">0</span></div>
     </div>
 
     <div id="canvas-grid"></div>
 
-    <div class="best-log">
-        <p>ベスト遺伝子データ (自動更新):</p>
-        <textarea id="gene-data" readonly></textarea>
+    <div class="io-panel">
+        <button onclick="exportJSON()">遺伝子をJSONで書き出し</button>
+        <button onclick="document.getElementById('fileInput').click()">JSONを読み込んで再開</button>
+        <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
     </div>
 
 <script>
-const POP_SIZE = 20;
-const STEP_LIMIT = 800;
-const UNIT = 40; // 1単位 = 40px
-const PASSAGE_W = UNIT; 
-const PASSAGE_L = UNIT * 5; 
+/**
+ * 定数・設定
+ */
+const TOTAL_POP = 100; // 計算上の個体数
+const DISPLAY_COUNT = 20; // 画面に表示する個体数
+const UNIT = 40; // 通路の幅
+const RESOLUTION = 2; // セル密度（小さいほど高精度。2px刻み）
+const STEP_LIMIT = 800; 
 
 class Sofa {
     constructor(gene = null) {
@@ -45,34 +55,32 @@ class Sofa {
         let commands = [];
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
-                vx: (Math.random() - 0.3) * 3, // 右方向へバイアス
-                vy: (Math.random() - 0.5) * 3,
-                vr: (Math.random() - 0.5) * 0.1,
-                px: (Math.random() - 0.5) * UNIT * 4,
-                py: (Math.random() - 0.5) * UNIT
+                vx: (Math.random() - 0.25) * 4, // 右方向へバイアス
+                vy: (Math.random() - 0.5) * 4,
+                vr: (Math.random() - 0.5) * 0.12,
             });
         }
         return commands;
     }
 
     reset() {
-        // 初期位置: 最初の通路(左側)の入り口付近
         this.x = 20;
         this.y = 120;
         this.rotation = 0;
         this.step = 0;
         this.alive = true;
         this.finished = false;
-        
-        // 身体: 幅4(160px), 高さ1(40px) の長方形
+        this.maxDist = 0;
+
+        // 身体: 1x3 (UNIT x UNIT*3)
         this.cells = [];
-        const res = 4; // 解像度
-        for (let iy = 0; iy < UNIT; iy += res) {
-            for (let ix = 0; ix < UNIT * 4; ix += res) {
-                this.cells.push({ ox: ix - UNIT * 2, oy: iy - UNIT / 2, active: true });
+        for (let iy = 0; iy < UNIT; iy += RESOLUTION) {
+            for (let ix = 0; ix < UNIT * 3; ix += RESOLUTION) {
+                this.cells.push({ ox: ix - UNIT * 1.5, oy: iy - UNIT / 2, active: true });
             }
         }
-        this.area = this.cells.length;
+        this.initialArea = this.cells.length;
+        this.area = this.initialArea;
     }
 
     update() {
@@ -90,139 +98,141 @@ class Sofa {
     checkStatus() {
         let activeCount = 0;
         let allInGoalZone = true;
+        let anyInCorner = false;
 
         for (let cell of this.cells) {
-            if (!cell.active) {
-                allInGoalZone = false;
-                continue;
-            }
+            if (!cell.active) continue;
 
             const rad = this.rotation;
             const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
             const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
 
-            // 通路の判定領域
-            // 領域A: 最初の通路 (0 < x < 5, 2 < y < 3)
-            const inA = (cx >= 0 && cx <= PASSAGE_L && cy >= 100 && cy <= 100 + PASSAGE_W);
-            // 領域Corner: 角 (5 < x < 6, 2 < y < 3) -> 実際にはAかBに含まれる
-            // 領域B: 二つ目の通路 (200 < x < 240, 0 < y < 100)
-            const inB = (cx >= 160 && cx <= 160 + PASSAGE_W && cy <= 100 + PASSAGE_W);
+            // 通路判定
+            const inA = (cx >= 0 && cx <= UNIT * 5 && cy >= 100 && cy <= 100 + UNIT);
+            const inB = (cx >= UNIT * 4 && cx <= UNIT * 5 && cy <= 100 + UNIT);
 
             if (!inA && !inB) {
                 cell.active = false;
-                allInGoalZone = false;
             } else {
                 activeCount++;
-                // 「二つ目の通路」に完全に入ったかチェック
-                // yが100未満のエリアが完全に「角を抜けた先」
-                if (cy > 100) allInGoalZone = false; 
+                if (cy > 100) allInGoalZone = false; // まだ角より下にセルがある
+                if (cx > UNIT * 4) anyInCorner = true; 
             }
         }
 
         this.area = activeCount;
+        this.maxDist = Math.max(this.maxDist, this.x);
+
         if (this.area <= 0) this.alive = false;
-        
-        // 全セルが領域B（上向き通路）に入り、かつ角(y=100)を完全に超えたら停止
-        if (activeCount > 0 && allInGoalZone) {
+        if (activeCount > 0 && allInGoalZone && this.x > UNIT * 4) {
             this.finished = true;
         }
     }
 
     draw(ctx) {
-        ctx.clearRect(0, 0, 300, 250);
-        
-        // 通路描画 (1x5 + 1x1 + 5x1)
+        ctx.clearRect(0, 0, 250, 200);
         ctx.fillStyle = "#333";
-        ctx.fillRect(0, 100, 200, 40); // 横
-        ctx.fillRect(160, 0, 40, 140);  // 縦
+        ctx.fillRect(0, 100, UNIT * 5, UNIT); 
+        ctx.fillRect(UNIT * 4, 0, UNIT, 100 + UNIT);
         
-        // 境界線
-        ctx.strokeStyle = "#555";
-        ctx.strokeRect(0, 100, 200, 40);
-        ctx.strokeRect(160, 0, 40, 140);
-
-        // ソファ描画
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
         for (let cell of this.cells) {
             if (!cell.active) continue;
             const rad = this.rotation;
             const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
             const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
-            ctx.fillRect(cx, cy, 3, 3);
+            ctx.fillRect(cx/1.2, cy/1.2, 2, 2); // 描画サイズ調整
         }
     }
 }
 
 let sofas = [];
 let generation = 1;
-const canvases = [];
 const ctxs = [];
 
 function init() {
     const grid = document.getElementById('canvas-grid');
-    for (let i = 0; i < POP_SIZE; i++) {
-        const cvs = document.createElement('canvas');
-        cvs.width = 250; cvs.height = 200;
-        grid.appendChild(cvs);
-        canvases.push(cvs);
-        ctxs.push(cvs.getContext('2d'));
+    for (let i = 0; i < TOTAL_POP; i++) {
+        if (i < DISPLAY_COUNT) {
+            const cvs = document.createElement('canvas');
+            cvs.width = 200; cvs.height = 160;
+            grid.appendChild(cvs);
+            ctxs.push(cvs.getContext('2d'));
+        }
         sofas.push(new Sofa());
     }
-    requestAnimationFrame(loop);
+    loop();
 }
 
 function loop() {
     let living = false;
-    sofas.forEach((s, i) => {
-        s.update();
-        s.draw(ctxs[i]);
-        if (s.alive && !s.finished && s.step < STEP_LIMIT) living = true;
-    });
-
-    if (!living) {
-        evolve();
-    } else {
-        requestAnimationFrame(loop);
+    for (let i = 0; i < TOTAL_POP; i++) {
+        sofas[i].update();
+        if (i < DISPLAY_COUNT) sofas[i].draw(ctxs[i]);
+        if (sofas[i].alive && !sofas[i].finished && sofas[i].step < STEP_LIMIT) living = true;
     }
+
+    if (!living) evolve();
+    else requestAnimationFrame(loop);
 }
 
 function evolve() {
-    // 評価順: 完走フラグ > 面積 > 進捗
     sofas.sort((a, b) => {
-        const scoreA = (a.finished ? 1000000 : 0) + (a.area * 100) + a.x;
-        const scoreB = (b.finished ? 1000000 : 0) + (b.area * 100) + b.x;
+        const scoreA = (a.finished ? 1000000 : 0) + (a.area * 100) + a.maxDist;
+        const scoreB = (b.finished ? 1000000 : 0) + (b.area * 100) + b.maxDist;
         return scoreB - scoreA;
     });
 
     const best = sofas[0];
     document.getElementById('gen-label').innerText = generation++;
     document.getElementById('area-label').innerText = best.area;
+    document.getElementById('progress-label').innerText = Math.min(100, (best.maxDist / 200 * 100).toFixed(1));
     document.getElementById('finish-label').innerText = sofas.filter(s => s.finished).length;
-    document.getElementById('gene-data').value = JSON.stringify(best.gene);
 
-    const nextGen = [];
-    // エリート継承
-    nextGen.push(new Sofa(best.gene));
+    const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))]; // エリート
     
-    while(nextGen.length < POP_SIZE) {
-        const p1 = sofas[Math.floor(Math.random() * 4)].gene;
-        const p2 = sofas[Math.floor(Math.random() * 8)].gene;
-        const childGene = [];
+    while(nextGen.length < TOTAL_POP) {
+        const p1 = sofas[Math.floor(Math.pow(Math.random(), 2) * 10)].gene;
+        const p2 = sofas[Math.floor(Math.random() * 20)].gene;
+        const child = [];
         for(let i=0; i<STEP_LIMIT; i++) {
-            // 交叉
             let cmd = Math.random() > 0.5 ? {...p1[i]} : {...p2[i]};
-            // 変異
-            if(Math.random() < 0.05) {
-                cmd.vr += (Math.random()-0.5) * 0.05;
-                cmd.vx += (Math.random()-0.5) * 1;
+            if(Math.random() < 0.08) { // 変異
+                cmd.vr += (Math.random()-0.5) * 0.08;
+                cmd.vx += (Math.random()-0.5) * 1.5;
+                cmd.vy += (Math.random()-0.5) * 1.5;
             }
-            childGene.push(cmd);
+            child.push(cmd);
         }
-        nextGen.push(new Sofa(childGene));
+        nextGen.push(new Sofa(child));
     }
     sofas = nextGen;
     sofas.forEach(s => s.reset());
     requestAnimationFrame(loop);
+}
+
+function exportJSON() {
+    const data = JSON.stringify({ gen: generation, gene: sofas[0].gene });
+    const blob = new Blob([data], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `sofa_best_gen${generation}.json`;
+    a.click();
+}
+
+function importJSON(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const imported = JSON.parse(e.target.result);
+        sofas.forEach(s => {
+            s.gene = JSON.parse(JSON.stringify(imported.gene));
+            s.reset();
+        });
+        generation = imported.gen || 1;
+    };
+    reader.readAsText(file);
 }
 
 init();
