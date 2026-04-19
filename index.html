@@ -2,48 +2,38 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: High-Res Evolution</title>
+    <title>Sofa Problem: High-Precision Component Analysis</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
-        h1 { font-size: 1.5rem; margin: 10px; color: #00d4ff; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; padding: 10px; }
-        canvas { background: #1a1a1a; border: 1px solid #333; width: 180px; height: 140px; }
-        .controls { background: #222; padding: 15px; border-radius: 10px; width: 90%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; }
+        .controls { background: #222; padding: 15px; border-radius: 10px; width: 90%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; margin-top: 10px; }
         .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
-        .io-panel { width: 90%; margin: 15px; display: flex; gap: 10px; }
-        button { flex: 1; padding: 10px; cursor: pointer; background: #333; color: white; border: 1px solid #555; border-radius: 5px; }
-        button:hover { background: #444; }
-        .finished-count { color: #0f0; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; padding: 10px; }
+        canvas { background: #000; border: 1px solid #333; width: 220px; height: 180px; }
+        button { padding: 10px 20px; cursor: pointer; background: #00d4ff; color: #000; border: none; border-radius: 5px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h1>📐 高精度・高速ソファGAシミュレーター</h1>
+    <h1>📏 30,000セル高精度ソファGA</h1>
     
     <div class="controls">
         <div>世代: <span id="gen-label" class="stat-val">1</span></div>
-        <div>計算個体数: <span class="stat-val">100</span></div>
-        <div>最高進捗: <span id="progress-label" class="stat-val">0</span>%</div>
-        <div>最高面積: <span id="area-label" class="stat-val">0</span></div>
-        <div>完走成功: <span id="finish-label" class="stat-val finished-count">0</span></div>
+        <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
+        <div>完走成功: <span id="finish-label" class="stat-val">0</span></div>
+        <button onclick="exportJSON()">JSON出力</button>
     </div>
 
     <div id="canvas-grid"></div>
 
-    <div class="io-panel">
-        <button onclick="exportJSON()">遺伝子をJSONで書き出し</button>
-        <button onclick="document.getElementById('fileInput').click()">JSONを読み込んで再開</button>
-        <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
-    </div>
-
 <script>
-/**
- * 定数・設定
- */
-const TOTAL_POP = 100; // 計算上の個体数
-const DISPLAY_COUNT = 20; // 画面に表示する個体数
-const UNIT = 40; // 通路の幅
-const RESOLUTION = 2; // セル密度（小さいほど高精度。2px刻み）
-const STEP_LIMIT = 800; 
+const TOTAL_POP = 100;
+const DISPLAY_COUNT = 20;
+const UNIT = 40; 
+const STEP_LIMIT = 800;
+
+// セル密度の設定: 1x3 の体を 100x300 セルにする
+const COLS = 300;
+const ROWS = 100;
+const CELL_SIZE = UNIT / ROWS; // 1セルあたりの物理サイズ
 
 class Sofa {
     constructor(gene = null) {
@@ -55,7 +45,7 @@ class Sofa {
         let commands = [];
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
-                vx: (Math.random() - 0.25) * 4, // 右方向へバイアス
+                vx: (Math.random() - 0.25) * 4,
                 vy: (Math.random() - 0.5) * 4,
                 vr: (Math.random() - 0.5) * 0.12,
             });
@@ -72,15 +62,9 @@ class Sofa {
         this.finished = false;
         this.maxDist = 0;
 
-        // 身体: 1x3 (UNIT x UNIT*3)
-        this.cells = [];
-        for (let iy = 0; iy < UNIT; iy += RESOLUTION) {
-            for (let ix = 0; ix < UNIT * 3; ix += RESOLUTION) {
-                this.cells.push({ ox: ix - UNIT * 1.5, oy: iy - UNIT / 2, active: true });
-            }
-        }
-        this.initialArea = this.cells.length;
-        this.area = this.initialArea;
+        // 100x300 のグリッドを生成 (フラット配列で高速化)
+        this.cells = new Uint8Array(COLS * ROWS).fill(1); // 1: active, 0: dead
+        this.area = COLS * ROWS;
     }
 
     update() {
@@ -92,60 +76,124 @@ class Sofa {
         this.y += g.vy;
 
         this.checkStatus();
+        
+        // 飛び地排除（30ステップに1回実行して負荷を軽減）
+        if (this.step % 30 === 0) {
+            this.removeIslands();
+        }
+        
         this.step++;
     }
 
     checkStatus() {
         let activeCount = 0;
         let allInGoalZone = true;
-        let anyInCorner = false;
+        const rad = this.rotation;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
 
-        for (let cell of this.cells) {
-            if (!cell.active) continue;
+        for (let i = 0; i < this.cells.length; i++) {
+            if (this.cells[i] === 0) continue;
 
-            const rad = this.rotation;
-            const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
-            const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
+            const r = Math.floor(i / COLS);
+            const c = i % COLS;
+            const ox = (c - COLS / 2) * CELL_SIZE;
+            const oy = (r - ROWS / 2) * CELL_SIZE;
 
-            // 通路判定
-            const inA = (cx >= 0 && cx <= UNIT * 5 && cy >= 100 && cy <= 100 + UNIT);
-            const inB = (cx >= UNIT * 4 && cx <= UNIT * 5 && cy <= 100 + UNIT);
+            const cx = this.x + ox * cos - oy * sin;
+            const cy = this.y + ox * sin + oy * cos;
+
+            const inA = (cx >= 0 && cx <= UNIT * 6 && cy >= 100 && cy <= 100 + UNIT);
+            const inB = (cx >= UNIT * 4 && cx <= UNIT * 5 && cy >= 0 && cy <= 100 + UNIT);
 
             if (!inA && !inB) {
-                cell.active = false;
+                this.cells[i] = 0;
             } else {
                 activeCount++;
-                if (cy > 100) allInGoalZone = false; // まだ角より下にセルがある
-                if (cx > UNIT * 4) anyInCorner = true; 
+                if (cy > 100) allInGoalZone = false;
             }
         }
 
         this.area = activeCount;
-        this.maxDist = Math.max(this.maxDist, this.x);
-
         if (this.area <= 0) this.alive = false;
-        if (activeCount > 0 && allInGoalZone && this.x > UNIT * 4) {
-            this.finished = true;
+        if (activeCount > 0 && allInGoalZone && this.x > UNIT * 4.2) this.finished = true;
+    }
+
+    // 飛び地（孤立した島）を消去するアルゴリズム
+    removeIslands() {
+        if (this.area === 0) return;
+        const visited = new Uint8Array(this.cells.length).fill(0);
+        let groups = [];
+
+        for (let i = 0; i < this.cells.length; i++) {
+            if (this.cells[i] === 1 && visited[i] === 0) {
+                let currentGroup = [];
+                let stack = [i];
+                visited[i] = 1;
+
+                while (stack.length > 0) {
+                    let idx = stack.pop();
+                    currentGroup.push(idx);
+
+                    const r = Math.floor(idx / COLS);
+                    const c = idx % COLS;
+
+                    // 上下左右の隣接チェック
+                    const neighbors = [];
+                    if (r > 0) neighbors.push(idx - COLS);
+                    if (r < ROWS - 1) neighbors.push(idx + COLS);
+                    if (c > 0) neighbors.push(idx - 1);
+                    if (c < COLS - 1) neighbors.push(idx + 1);
+
+                    for (let n of neighbors) {
+                        if (this.cells[n] === 1 && visited[n] === 0) {
+                            visited[n] = 1;
+                            stack.push(n);
+                        }
+                    }
+                }
+                groups.push(currentGroup);
+            }
+        }
+
+        if (groups.length > 1) {
+            // 最大のグループ以外を消去
+            groups.sort((a, b) => b.length - a.length);
+            for (let j = 1; j < groups.length; j++) {
+                for (let idx of groups[j]) {
+                    this.cells[idx] = 0;
+                }
+            }
+            this.area = groups[0].length;
         }
     }
 
     draw(ctx) {
-        ctx.clearRect(0, 0, 250, 200);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
         ctx.fillStyle = "#333";
         ctx.fillRect(0, 100, UNIT * 5, UNIT); 
         ctx.fillRect(UNIT * 4, 0, UNIT, 100 + UNIT);
         
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
-        for (let cell of this.cells) {
-            if (!cell.active) continue;
-            const rad = this.rotation;
-            const cx = this.x + cell.ox * Math.cos(rad) - cell.oy * Math.sin(rad);
-            const cy = this.y + cell.ox * Math.sin(rad) + cell.oy * Math.cos(rad);
-            ctx.fillRect(cx/1.2, cy/1.2, 2, 2); // 描画サイズ調整
+        const rad = this.rotation;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+
+        // 描画負荷軽減のため、100x300全てではなくactiveなセルのみ描画
+        for (let i = 0; i < this.cells.length; i++) {
+            if (this.cells[i] === 0) continue;
+            const r = Math.floor(i / COLS);
+            const c = i % COLS;
+            const ox = (c - COLS / 2) * CELL_SIZE;
+            const oy = (r - ROWS / 2) * CELL_SIZE;
+            const cx = this.x + ox * cos - oy * sin;
+            const cy = this.y + ox * sin + oy * cos;
+            ctx.fillRect(cx, cy, 1, 1);
         }
     }
 }
 
+// --- GA Engine (簡略化) ---
 let sofas = [];
 let generation = 1;
 const ctxs = [];
@@ -155,7 +203,7 @@ function init() {
     for (let i = 0; i < TOTAL_POP; i++) {
         if (i < DISPLAY_COUNT) {
             const cvs = document.createElement('canvas');
-            cvs.width = 200; cvs.height = 160;
+            cvs.width = 250; cvs.height = 180;
             grid.appendChild(cvs);
             ctxs.push(cvs.getContext('2d'));
         }
@@ -171,39 +219,26 @@ function loop() {
         if (i < DISPLAY_COUNT) sofas[i].draw(ctxs[i]);
         if (sofas[i].alive && !sofas[i].finished && sofas[i].step < STEP_LIMIT) living = true;
     }
-
     if (!living) evolve();
     else requestAnimationFrame(loop);
 }
 
 function evolve() {
-    sofas.sort((a, b) => {
-        const scoreA = (a.finished ? 1000000 : 0) + (a.area * 100) + a.maxDist;
-        const scoreB = (b.finished ? 1000000 : 0) + (b.area * 100) + b.maxDist;
-        return scoreB - scoreA;
-    });
-
+    sofas.sort((a, b) => ((b.finished?1e9:0) + b.area) - ((a.finished?1e9:0) + a.area));
     const best = sofas[0];
     document.getElementById('gen-label').innerText = generation++;
-    document.getElementById('area-label').innerText = best.area;
-    document.getElementById('progress-label').innerText = Math.min(100, (best.maxDist / 200 * 100).toFixed(1));
+    // 体積計算: 生き残りセル数 / 10000
+    document.getElementById('area-label').innerText = (best.area / 10000).toFixed(4);
     document.getElementById('finish-label').innerText = sofas.filter(s => s.finished).length;
 
-    const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))]; // エリート
-    
+    const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
     while(nextGen.length < TOTAL_POP) {
-        const p1 = sofas[Math.floor(Math.pow(Math.random(), 2) * 10)].gene;
-        const p2 = sofas[Math.floor(Math.random() * 20)].gene;
-        const child = [];
-        for(let i=0; i<STEP_LIMIT; i++) {
-            let cmd = Math.random() > 0.5 ? {...p1[i]} : {...p2[i]};
-            if(Math.random() < 0.08) { // 変異
-                cmd.vr += (Math.random()-0.5) * 0.08;
-                cmd.vx += (Math.random()-0.5) * 1.5;
-                cmd.vy += (Math.random()-0.5) * 1.5;
-            }
-            child.push(cmd);
-        }
+        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 20)].gene;
+        const child = p.map(cmd => ({
+            vx: cmd.vx + (Math.random()-0.5)*0.5,
+            vy: cmd.vy + (Math.random()-0.5)*0.5,
+            vr: cmd.vr + (Math.random()-0.5)*0.02
+        }));
         nextGen.push(new Sofa(child));
     }
     sofas = nextGen;
@@ -216,23 +251,8 @@ function exportJSON() {
     const blob = new Blob([data], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `sofa_best_gen${generation}.json`;
+    a.href = url; a.download = `sofa_30k_res.json`;
     a.click();
-}
-
-function importJSON(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        const imported = JSON.parse(e.target.result);
-        sofas.forEach(s => {
-            s.gene = JSON.parse(JSON.stringify(imported.gene));
-            s.reset();
-        });
-        generation = imported.gen || 1;
-    };
-    reader.readAsText(file);
 }
 
 init();
