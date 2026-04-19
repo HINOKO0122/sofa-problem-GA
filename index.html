@@ -2,47 +2,84 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: 1:4 Balanced Rotation GA</title>
+    <title>Sofa GA: Area & Goal Focused</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
-        .controls { background: #222; padding: 15px; border-radius: 10px; width: 95%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; margin-top: 10px; }
-        .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 20px; }
-        canvas { background: #000; border: 1px solid #444; width: 400px; height: 400px; }
-        .io-panel { margin: 15px; display: flex; gap: 10px; }
-        button { padding: 10px 20px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-weight: bold; }
-        .desc { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; text-align: center; }
+        .header { background: #222; padding: 15px; width: 100%; text-align: center; border-bottom: 3px solid #ff00ff; }
+        .main-layout { display: flex; flex-direction: row; width: 98%; gap: 15px; padding: 15px; }
+        
+        .side-panel { background: #1a1a1a; padding: 20px; border-radius: 10px; min-width: 250px; display: flex; flex-direction: column; gap: 15px; border: 1px solid #333; }
+        .slider-group { display: flex; flex-direction: column; gap: 5px; }
+        .slider-group label { font-size: 0.85rem; color: #ff00ff; }
+        input[type=range] { cursor: pointer; accent-color: #ff00ff; }
+        
+        .stats { background: #000; padding: 10px; border-radius: 5px; border-left: 4px solid #ff00ff; }
+        .stat-val { color: #ff00ff; font-weight: bold; font-family: monospace; }
+
+        #canvas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; flex-grow: 1; }
+        canvas { background: #000; border: 1px solid #444; width: 100%; max-width: 380px; height: auto; aspect-ratio: 1/1; }
+        
+        .io-panel { display: flex; gap: 10px; margin-top: 10px; }
+        button { flex: 1; padding: 8px; cursor: pointer; background: #333; color: #ff00ff; border: 1px solid #ff00ff; border-radius: 5px; font-size: 0.8rem; }
+        button:hover { background: #ff00ff; color: #000; }
     </style>
 </head>
 <body>
-    <h1>📏 90度回転制御版：1:4 ソファGA</h1>
-    
-    <div class="controls">
-        <div>世代: <span id="gen-label" class="stat-val">1</span></div>
-        <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
-        <div>成功数: <span id="finish-label" class="stat-val">0</span></div>
+    <div class="header">
+        <h1>📐 最大面積・突破優先：1:4 ソファGA</h1>
     </div>
 
-    <div class="io-panel">
-        <button onclick="exportJSON()">JSON保存</button>
-        <button onclick="document.getElementById('fileInput').click()">JSON読込</button>
-        <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
-    </div>
-    <p class="desc">個体数100。全ステップ終了時に合計約90度回転するよう調整済み。<br>
-    青いグリッド1マスが通路幅(UNIT)です。</p>
+    <div class="main-layout">
+        <div class="side-panel">
+            <div class="stats">
+                <div>世代: <span id="gen-label" class="stat-val">1</span></div>
+                <div>最高体積: <span id="area-label" class="stat-val">0.0000</span></div>
+                <div>成功個体: <span id="finish-label" class="stat-val">0</span></div>
+            </div>
 
-    <div id="canvas-grid"></div>
+            <div class="slider-group">
+                <label>速度変異率 (VX/VY): <span id="val-v-mut">0.50</span></label>
+                <input type="range" id="mut-v" min="0.01" max="2.0" step="0.01" value="0.50" oninput="updateParams()">
+            </div>
+
+            <div class="slider-group">
+                <label>回転変異率 (VR): <span id="val-r-mut">0.0010</span></label>
+                <input type="range" id="mut-r" min="0.0001" max="0.01" step="0.0001" value="0.0010" oninput="updateParams()">
+            </div>
+
+            <div class="io-panel">
+                <button onclick="exportJSON()">JSON保存</button>
+                <button onclick="document.getElementById('fileInput').click()">JSON読込</button>
+                <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
+            </div>
+            
+            <p style="font-size: 0.75rem; color: #777;">
+                ※形は無視し、「いかに大きくゴールするか」のみを追求します。
+            </p>
+        </div>
+
+        <div id="canvas-grid"></div>
+    </div>
 
 <script>
-const TOTAL_POP = 100; // 個体数を増量
+const TOTAL_POP = 100;
 const DISPLAY_COUNT = 6; 
 const UNIT = 60; 
 const STEP_LIMIT = 2000; 
-
 const COLS = 400; 
 const ROWS = 100;
 const INITIAL_AREA = COLS * ROWS;
 const CELL_SIZE = UNIT / ROWS; 
+
+let mutationRateV = 0.50;
+let mutationRateR = 0.0010;
+
+function updateParams() {
+    mutationRateV = parseFloat(document.getElementById('mut-v').value);
+    mutationRateR = parseFloat(document.getElementById('mut-r').value);
+    document.getElementById('val-v-mut').innerText = mutationRateV.toFixed(2);
+    document.getElementById('val-r-mut').innerText = mutationRateR.toFixed(4);
+}
 
 class Sofa {
     constructor(gene = null) {
@@ -52,12 +89,11 @@ class Sofa {
 
     createRandomGene() {
         let commands = [];
-        // 合計90度(1.57rad)をステップ数(2000)で割ると、1歩あたり平均0.00078rad
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
                 vx: (Math.random() - 0.1) * 4.0, 
                 vy: (Math.random() - 0.4) * 3.0, 
-                vr: (Math.random() * 0.0016) // 期待値が0.0008になるよう設定
+                vr: (Math.random() * 0.0016) 
             });
         }
         return commands;
@@ -116,6 +152,7 @@ class Sofa {
     }
 
     removeIslands() {
+        // 島抜き処理は面積の正確な評価のために維持
         if (this.activeCount === 0) return;
         const grid = new Uint8Array(INITIAL_AREA).fill(0);
         for(let i=0; i<this.activeCount; i++) grid[this.activeIndices[i]] = 1;
@@ -149,10 +186,10 @@ class Sofa {
         ctx.fillRect(0, 0, UNIT * 6, UNIT); 
         ctx.fillRect(UNIT * 5, 0, UNIT, UNIT * 8); 
 
-        ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
+        ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#ff00ff" : "#555");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
-        for (let i = 0; i < this.activeCount; i += 2) { // 負荷軽減のため少し間引き
+        for (let i = 0; i < this.activeCount; i += 2) {
             const idx = this.activeIndices[i];
             const r = (idx / COLS) | 0; const c = idx % COLS;
             const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
@@ -160,7 +197,7 @@ class Sofa {
             ctx.fillRect(cx, cy, 1, 1);
         }
 
-        ctx.strokeStyle = "rgba(0, 212, 255, 0.3)";
+        ctx.strokeStyle = "rgba(255, 0, 255, 0.2)";
         ctx.lineWidth = 1;
         for(let i=0; i<6; i++) ctx.strokeRect(i * UNIT, 0, UNIT, UNIT);
         for(let i=0; i<8; i++) ctx.strokeRect(UNIT * 5, i * UNIT, UNIT, UNIT);
@@ -200,9 +237,10 @@ function loop() {
 }
 
 function evolve() {
+    // 【修正】面積と完走のみで評価
     sofas.sort((a, b) => {
-        const scoreA = (a.finished ? 1e12 : 0) + (a.area * Math.pow(a.activeCount/INITIAL_AREA, 3));
-        const scoreB = (b.finished ? 1e12 : 0) + (b.area * Math.pow(b.activeCount/INITIAL_AREA, 3));
+        const scoreA = (a.finished ? 1e12 : 0) + a.area;
+        const scoreB = (b.finished ? 1e12 : 0) + b.area;
         return scoreB - scoreA;
     });
 
@@ -213,14 +251,13 @@ function evolve() {
 
     const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
     while(nextGen.length < TOTAL_POP) {
-        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 20)].gene;
+        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 30)].gene;
         const child = p.map(cmd => {
-            // 変異幅を抑え、右回転への緩やかなバイアスを維持
-            const mutation_r = (Math.random() - 0.45) * 0.0005; 
+            const mutation_r = (Math.random() - 0.45) * mutationRateR; 
             return {
-                vx: cmd.vx + (Math.random()-0.5)*0.4,
-                vy: cmd.vy + (Math.random()-0.5)*0.4,
-                vr: Math.max(-0.01, Math.min(0.01, cmd.vr + mutation_r))
+                vx: cmd.vx + (Math.random()-0.5) * mutationRateV,
+                vy: cmd.vy + (Math.random()-0.5) * mutationRateV,
+                vr: cmd.vr + mutation_r
             };
         });
         nextGen.push(new Sofa(child));
@@ -233,22 +270,15 @@ function evolve() {
 function exportJSON() {
     const data = JSON.stringify({ gen: generation, gene: sofas[0].gene });
     const blob = new Blob([data], {type: 'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `sofa_1x4_pop100_90deg.json`;
-    a.click();
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `sofa_area_focused.json`; a.click();
 }
-
 function importJSON(event) {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
         const imported = JSON.parse(e.target.result);
-        sofas.forEach(s => {
-            s.gene = JSON.parse(JSON.stringify(imported.gene));
-            s.reset();
-        });
+        sofas.forEach(s => { s.gene = JSON.parse(JSON.stringify(imported.gene)); s.reset(); });
         generation = imported.gen || 1;
     };
     reader.readAsText(file);
