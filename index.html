@@ -2,20 +2,20 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Sofa Problem: 1:4 Right-Down GA (Clockwise Bias)</title>
+    <title>Sofa Problem: 1:4 Balanced Rotation GA</title>
     <style>
         body { background: #121212; color: #e0e0e0; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
         .controls { background: #222; padding: 15px; border-radius: 10px; width: 95%; display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; border-bottom: 3px solid #00d4ff; margin-top: 10px; }
         .stat-val { color: #00d4ff; font-weight: bold; font-size: 1.2rem; }
-        #canvas-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 20px; }
-        canvas { background: #000; border: 1px solid #444; width: 500px; height: 500px; }
+        #canvas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 20px; }
+        canvas { background: #000; border: 1px solid #444; width: 400px; height: 400px; }
         .io-panel { margin: 15px; display: flex; gap: 10px; }
         button { padding: 10px 20px; cursor: pointer; background: #333; color: #00d4ff; border: 1px solid #00d4ff; border-radius: 5px; font-weight: bold; }
         .desc { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; text-align: center; }
     </style>
 </head>
 <body>
-    <h1>📏 形状維持・右回転優先型：1:4 ソファGA</h1>
+    <h1>📏 90度回転制御版：1:4 ソファGA</h1>
     
     <div class="controls">
         <div>世代: <span id="gen-label" class="stat-val">1</span></div>
@@ -28,16 +28,16 @@
         <button onclick="document.getElementById('fileInput').click()">JSON読込</button>
         <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importJSON(event)">
     </div>
-    <p class="desc">時計回りへのバイアスと、細長い形状を保つ個体を優先するロジックを搭載。<br>
-    青いグリッド1マスが通路幅(UNIT)です。初期ソファは正確に横4マス分あります。</p>
+    <p class="desc">個体数100。全ステップ終了時に合計約90度回転するよう調整済み。<br>
+    青いグリッド1マスが通路幅(UNIT)です。</p>
 
     <div id="canvas-grid"></div>
 
 <script>
-const TOTAL_POP = 40;
-const DISPLAY_COUNT = 4; 
+const TOTAL_POP = 100; // 個体数を増量
+const DISPLAY_COUNT = 6; 
 const UNIT = 60; 
-const STEP_LIMIT = 2000; // 長い身体が完全に抜けきるために長めに設定
+const STEP_LIMIT = 2000; 
 
 const COLS = 400; 
 const ROWS = 100;
@@ -52,11 +52,12 @@ class Sofa {
 
     createRandomGene() {
         let commands = [];
+        // 合計90度(1.57rad)をステップ数(2000)で割ると、1歩あたり平均0.00078rad
         for (let i = 0; i < STEP_LIMIT; i++) {
             commands.push({
-                vx: (Math.random() - 0.1) * 5.0, // 右方向へのバイアス
-                vy: (Math.random() - 0.4) * 4.0, 
-                vr: (Math.random() * 0.1) // 初期値を時計回り(0〜0.1)に限定
+                vx: (Math.random() - 0.1) * 4.0, 
+                vy: (Math.random() - 0.4) * 3.0, 
+                vr: (Math.random() * 0.0016) // 期待値が0.0008になるよう設定
             });
         }
         return commands;
@@ -69,7 +70,6 @@ class Sofa {
         this.step = 0;
         this.alive = true;
         this.finished = false;
-        
         this.activeIndices = new Int32Array(INITIAL_AREA);
         for(let i=0; i < INITIAL_AREA; i++) this.activeIndices[i] = i;
         this.activeCount = INITIAL_AREA;
@@ -152,7 +152,7 @@ class Sofa {
         ctx.fillStyle = this.finished ? "#0f0" : (this.alive ? "#00d4ff" : "#ff4444");
         const cos = Math.cos(this.rotation);
         const sin = Math.sin(this.rotation);
-        for (let i = 0; i < this.activeCount; i += 1) {
+        for (let i = 0; i < this.activeCount; i += 2) { // 負荷軽減のため少し間引き
             const idx = this.activeIndices[i];
             const r = (idx / COLS) | 0; const c = idx % COLS;
             const ox = (c - COLS / 2) * CELL_SIZE; const oy = (r - ROWS / 2) * CELL_SIZE;
@@ -176,7 +176,7 @@ function init() {
     grid.innerHTML = ""; 
     for (let i = 0; i < DISPLAY_COUNT; i++) {
         const cvs = document.createElement('canvas');
-        cvs.width = 500; cvs.height = 500;
+        cvs.width = 400; cvs.height = 400;
         grid.appendChild(cvs);
         ctxs.push(cvs.getContext('2d'));
     }
@@ -201,19 +201,9 @@ function loop() {
 
 function evolve() {
     sofas.sort((a, b) => {
-        // 完走ボーナス
-        const scoreA = a.finished ? 1e12 : 0;
-        const scoreB = b.finished ? 1e12 : 0;
-        
-        // 形状維持ボーナス：面積が残っているほど高いが、細長さを維持している方をより重視
-        const integrityA = (a.activeCount / INITIAL_AREA);
-        const integrityB = (b.activeCount / INITIAL_AREA);
-
-        // スコア計算：面積 * (維持率の2乗) で削れすぎを厳しく罰する
-        const finalA = scoreA + (a.area * integrityA * integrityA);
-        const finalB = scoreB + (b.area * integrityB * integrityB);
-
-        return finalB - finalA;
+        const scoreA = (a.finished ? 1e12 : 0) + (a.area * Math.pow(a.activeCount/INITIAL_AREA, 3));
+        const scoreB = (b.finished ? 1e12 : 0) + (b.area * Math.pow(b.activeCount/INITIAL_AREA, 3));
+        return scoreB - scoreA;
     });
 
     const best = sofas[0];
@@ -223,14 +213,14 @@ function evolve() {
 
     const nextGen = [new Sofa(JSON.parse(JSON.stringify(best.gene)))];
     while(nextGen.length < TOTAL_POP) {
-        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 12)].gene;
+        const p = sofas[Math.floor(Math.pow(Math.random(), 2) * 20)].gene;
         const child = p.map(cmd => {
-            // 右回転（時計回り）への変異バイアス
-            const mutation_r = (Math.random() - 0.4) * 0.02; // +方向(時計回り)に出やすい
+            // 変異幅を抑え、右回転への緩やかなバイアスを維持
+            const mutation_r = (Math.random() - 0.45) * 0.0005; 
             return {
-                vx: cmd.vx + (Math.random()-0.5)*0.5,
-                vy: cmd.vy + (Math.random()-0.5)*0.5,
-                vr: cmd.vr + mutation_r
+                vx: cmd.vx + (Math.random()-0.5)*0.4,
+                vy: cmd.vy + (Math.random()-0.5)*0.4,
+                vr: Math.max(-0.01, Math.min(0.01, cmd.vr + mutation_r))
             };
         });
         nextGen.push(new Sofa(child));
@@ -245,7 +235,7 @@ function exportJSON() {
     const blob = new Blob([data], {type: 'application/json'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `sofa_1x4_r_bias.json`;
+    a.download = `sofa_1x4_pop100_90deg.json`;
     a.click();
 }
 
